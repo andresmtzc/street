@@ -172,8 +172,13 @@
       <div class="panel-section">
         <div class="section-title">Editing</div>
         <button class="btn" id="projectPointsBtn" disabled>Project Points to Red</button>
-        
+
         <div style="margin: 12px 0;">
+          <div class="checkbox-row">
+            <input type="checkbox" id="autoReproject">
+            <label for="autoReproject">Auto-reproject on curve edit</label>
+          </div>
+
           <div class="checkbox-row">
             <input type="checkbox" id="dragMode">
             <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
@@ -389,7 +394,13 @@ function createCPMarker(lngLat) {
   };
 
   marker.on('drag', updateRedTrackLine);
-  marker.on('dragend', updateRedTrackLine);
+  marker.on('dragend', () => {
+    updateRedTrackLine();
+    // Auto-reproject if enabled
+    if (document.getElementById('autoReproject').checked && rawPoints.length > 0 && redMarkers.length > 0) {
+      projectPointsToRed();
+    }
+  });
   controlPointMarkers.push(marker);
   updateControlsVisibility();
 }
@@ -693,17 +704,22 @@ document.getElementById('fitBtn').onclick = fitToTrack;
 
 document.getElementById('exportBtn').onclick = () => {
   const exportData = {
-    points: redMarkers.map(m => ({
-      sequentialIndex: m.data.sequentialIndex,
-      originalImageIndex: m.data.imageIndex,
-      lat: m.data.lat,
-      lon: m.data.lon,
-      imageUrl: m.data.associatedImage
+    rawPoints: rawPoints.map(p => ({
+      index: p.index,
+      lat: p.lat,
+      lon: p.lon,
+      imageUrl: imagesByIndex[p.index] // Preserve GitHub URLs, blob URLs won't work after session
     })),
     controlPoints: controlPointMarkers.map(m => {
       const ll = m.getLngLat();
       return { lon: ll.lng, lat: ll.lat };
-    })
+    }),
+    redMarkers: redMarkers.map(m => ({
+      sequentialIndex: m.data.sequentialIndex,
+      originalImageIndex: m.data.imageIndex,
+      lat: m.data.lat,
+      lon: m.data.lon
+    }))
   };
 
   const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
@@ -798,7 +814,7 @@ function clearAll() {
 document.getElementById('clearAllBtn').onclick = clearAll;
 
 /* ========================
-   IMPORT RED PATH
+   IMPORT FULL SESSION
 ======================== */
 document.getElementById('importRedInput').onchange = async (e) => {
   const f = e.target.files[0];
@@ -809,24 +825,31 @@ document.getElementById('importRedInput').onchange = async (e) => {
   // Clear existing data first
   clearAll();
 
-  // Recreate control points
+  // 1. Restore rawPoints (blue dots + blue line)
+  if (data.rawPoints && data.rawPoints.length > 0) {
+    // Restore image URLs (GitHub URLs will work, blob URLs won't)
+    data.rawPoints.forEach(p => {
+      if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
+        imagesByIndex[p.index] = p.imageUrl;
+      }
+    });
+
+    processRawPoints(data.rawPoints);
+  }
+
+  // 2. Recreate control points + red curve
   if (data.controlPoints && data.controlPoints.length > 0) {
     data.controlPoints.forEach(cp => {
       createCPMarker([cp.lon, cp.lat]);
     });
     updateRedTrackLine();
     document.getElementById('showRedTrack').checked = true;
+    document.getElementById('projectPointsBtn').disabled = false;
   }
 
-  // Recreate red markers
-  if (data.points && data.points.length > 0) {
-    data.points.forEach(p => {
-      // Restore images if URLs are blob URLs, we can't use them
-      // But if they have originalImageIndex, we can try to match with loaded images
-      if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
-        imagesByIndex[p.originalImageIndex] = p.imageUrl;
-      }
-
+  // 3. Recreate red markers
+  if (data.redMarkers && data.redMarkers.length > 0) {
+    data.redMarkers.forEach(p => {
       createRedMarker(
         [p.lon, p.lat],
         p.sequentialIndex,
@@ -837,22 +860,10 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('showRedDots').checked = true;
     document.getElementById('dragMode').disabled = false;
     document.getElementById('exportBtn').disabled = false;
-    document.getElementById('projectPointsBtn').disabled = false;
   }
 
-  fitToImportedData();
   updateStatus();
 };
-
-function fitToImportedData() {
-  if (redMarkers.length === 0) return;
-  const b = new mapboxgl.LngLatBounds();
-  redMarkers.forEach(m => {
-    const ll = m.marker.getLngLat();
-    b.extend([ll.lng, ll.lat]);
-  });
-  map.fitBounds(b, { padding: 50 });
-}
 
 // Start
 loadDefaultData();
