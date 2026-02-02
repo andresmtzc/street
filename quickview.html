@@ -1,0 +1,687 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mapbox Viewer — Advanced Path Editing</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Instrument+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: 'Instrument Sans', sans-serif; overflow: hidden; background: #000; }
+    #main-container { display: flex; flex-direction: column; height: 100vh; }
+
+    #viewer-section { height: 50%; background: #111; position: relative; display: flex; flex-direction: column; border-bottom: 2px solid #333; }
+    #viewer-header { padding: 8px 15px; background: #222; color: white; display: flex; justify-content: space-between; align-items: center; font-size: 13px; z-index: 10; }
+    #viewer-body { flex-grow: 1; position: relative; background: #000; }
+    #panorama { width: 100%; height: 100%; }
+
+    #map-section { height: 50%; position: relative; display: flex; }
+    #left-panel {
+      width: 280px; background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
+      border-right: 1px solid #333; overflow-y: auto; z-index: 50;
+      box-shadow: 4px 0 12px rgba(0,0,0,0.5);
+    }
+    #map { flex: 1; height: 100%; }
+
+    .panel-section { border-bottom: 1px solid #2a2a2a; padding: 16px; }
+    
+    .section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+      color: #666; text-transform: uppercase; margin-bottom: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .checkbox-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 0; cursor: pointer;
+      border-radius: 4px; margin: 0 -6px; padding-left: 6px;
+    }
+    .checkbox-row:hover { background: rgba(255,255,255,0.03); }
+    .checkbox-row input[type="checkbox"] { accent-color: #1fb6ff; cursor: pointer; }
+    .checkbox-row label { color: #ccc; font-size: 13px; cursor: pointer; flex: 1; }
+
+    .btn {
+      width: 100%; padding: 10px 14px;
+      background: linear-gradient(135deg, #1fb6ff 0%, #0d8fd9 100%);
+      border: none; border-radius: 6px; color: white;
+      font-weight: 600; font-size: 12px; cursor: pointer; margin: 8px 0;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled { background: #2a2a2a; color: #666; cursor: not-allowed; transform: none; }
+    .btn-danger { background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); }
+
+    /* MARKERS */
+    .custom-marker { 
+      width: 16px; height: 16px; border-radius: 50%; 
+      border: 1.5px solid white; cursor: pointer; transition: 0.2s; 
+      display: flex; justify-content: center; align-items: center;
+      font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700;
+      color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      z-index: 5;
+    }
+    
+    /* Blue Dots (Original) */
+    .blue-dot { background-color: #2b6df6; }
+    .blue-dot.active { border-color: #ffff00; transform: scale(1.3); z-index: 20; }
+    .blue-dot:hover { z-index: 15; transform: scale(1.2); }
+
+    /* Red Dots (Projected) */
+    .red-dot { background-color: #ff4444; border-color: #fff; z-index: 10; }
+    .red-dot:hover { z-index: 15; transform: scale(1.2); }
+    
+    /* Delete Cursor */
+    .delete-cursor { cursor: not-allowed !important; }
+    .delete-cursor:hover { transform: scale(0.9); opacity: 0.8; }
+
+    /* Control Point Markers */
+    .control-point-marker {
+      width: 14px; height: 14px; background: #ffeb3b;
+      border: 2px solid #000; transform: rotate(45deg);
+      cursor: move; box-shadow: 0 0 8px rgba(255,235,59,0.6);
+      z-index: 30;
+    }
+
+    #ui-overlay { 
+      position: absolute; top: 10px; right: 10px;
+      background: rgba(0,0,0,0.85); padding: 12px; border-radius: 8px;
+      display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+      color: white; z-index: 20; border: 1px solid rgba(255,255,255,0.1);
+    }
+
+
+  </style>
+</head>
+<body>
+
+<div id="main-container">
+  <div id="viewer-section">
+    <div id="viewer-header">
+      <div><b id="viewer-title">Street View</b> <span id="viewer-meta" style="margin-left:10px; opacity:0.7;"></span></div>
+    </div>
+    <div id="viewer-body">
+      <div id="panorama"></div>
+      <div id="empty-msg" style="height:100%; display:flex; justify-content:center; align-items:center; color:#555;">Loading...</div>
+    </div>
+  </div>
+
+  <div id="map-section">
+    <div id="left-panel">
+      <div class="panel-section">
+        <div class="section-title">View Controls</div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showBlueDots" checked>
+          <label for="showBlueDots">Show Blue Dots</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showRedDots" checked>
+          <label for="showRedDots">Show Red Dots</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showBlueTrack" checked>
+          <label for="showBlueTrack">Show Blue Track</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showRedTrack">
+          <label for="showRedTrack">Show Red Track</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showControlPoints" checked>
+          <label for="showControlPoints">Show Diamond CPs</label>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Smoothing</div>
+        <button class="btn" id="generateRedBtn">Generate Red Track</button>
+        <div style="margin-top: 8px;">
+          <div class="checkbox-row">
+            <input type="checkbox" id="addCPMode">
+            <label for="addCPMode">Add CP Mode</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="removeCPMode">
+            <label for="removeCPMode">Remove CP Mode</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Editing</div>
+        <button class="btn" id="projectPointsBtn" disabled>Project Points to Red</button>
+        
+        <div style="margin: 12px 0;">
+          <div class="checkbox-row">
+            <input type="checkbox" id="dragMode">
+            <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
+            Drag Red dots along curve
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="removePointMode">
+            <label for="removePointMode" style="color:#ff4444; font-weight:bold;">Remove Point Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px;">
+            Click Red dot to delete & re-index
+          </div>
+        </div>
+
+        <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Status</div>
+        <div style="font-size: 11px; color: #999;">
+          <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
+          <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+    
+    <div id="ui-overlay">
+      <input id="jsonInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
+      <button id="fitBtn" style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Recenter</button>
+    </div>
+  </div>
+</div>
+
+<script>
+mapboxgl.accessToken = "pk.eyJ1IjoiYW5kcmVzbXR6YyIsImEiOiJjbWl5eWQ0a2gwbDRlM2RweTN6ZXY1MmRsIn0.RDhU90VJPV_Bcjt1tab-MQ";
+
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/satellite-streets-v12',
+  center: [-100.3483, 25.6752],
+  zoom: 15
+});
+
+// Data Storage
+let rawPoints = []; // The loaded JSON data
+let blueMarkers = []; // Original Blue Dots
+let redMarkers = [];  // Projected Red Dots (Object: { marker, data })
+let controlPointMarkers = [];
+let controlPoints = [];
+
+// Viewer State
+let imagesByIndex = {}; 
+let currentIdx = -1;
+let panoViewer = null;
+
+// Logic State
+let redTrackLine = null;
+let addCPModeActive = false;
+let removeCPModeActive = false;
+let dragModeActive = false;
+let removePointModeActive = false;
+
+const GITHUB_BASE = "https://andresmtzc.github.io/geepeeX/streetview/";
+const DEFAULT_JSON = GITHUB_BASE + "trip_1769904967799.json";
+
+/* ========================
+   CATMULL-ROM SPLINE
+======================== */
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return [
+    0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+    0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+  ];
+}
+
+function generateCatmullRomCurve(controlPts, segmentsPerSection = 20) {
+  if (controlPts.length < 2) return controlPts;
+  const curve = [];
+  const n = controlPts.length;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = i === 0 ? controlPts[i] : controlPts[i - 1];
+    const p1 = controlPts[i];
+    const p2 = controlPts[i + 1];
+    const p3 = i === n - 2 ? controlPts[i + 1] : controlPts[i + 2];
+    for (let j = 0; j < segmentsPerSection; j++) {
+      curve.push(catmullRom(p0, p1, p2, p3, j / segmentsPerSection));
+    }
+  }
+  curve.push(controlPts[n - 1]);
+  return curve;
+}
+
+/* ========================
+   INITIALIZATION
+======================== */
+async function loadDefaultData() {
+  try {
+    const response = await fetch(DEFAULT_JSON);
+    const data = await response.json();
+    data.points.forEach(p => imagesByIndex[p.index] = `${GITHUB_BASE}img${p.index}.jpg`);
+    processRawPoints(data.points);
+  } catch (err) {
+    document.getElementById('empty-msg').textContent = "Load local JSON";
+  }
+}
+
+function processRawPoints(points) {
+  rawPoints = points.sort((a,b) => a.index - b.index);
+  
+  // Clear existing blue markers
+  blueMarkers.forEach(m => m.remove());
+  blueMarkers = [];
+
+  // 1. Draw Blue Track
+  if (map.getSource('blue-track')) map.removeSource('blue-track');
+  if (map.getLayer('blue-track')) map.removeLayer('blue-track');
+  
+  map.addSource('blue-track', { 
+    type:'geojson', 
+    data: { type:'Feature', geometry: { type:'LineString', coordinates: rawPoints.map(p=>[p.lon,p.lat]) } } 
+  });
+  map.addLayer({ 
+    id:'blue-track', type:'line', source:'blue-track', 
+    paint: { 'line-color':'#2b6df6', 'line-width':3, 'line-opacity': 0.6 }
+  });
+
+  // 2. Create Blue Dots
+  rawPoints.forEach((p, arrayIndex) => {
+    const el = document.createElement('div');
+    el.className = 'custom-marker blue-dot';
+    el.innerText = p.index; // Show Original ID
+    el.onclick = () => openViewer(p.index);
+    
+    const marker = new mapboxgl.Marker({ element: el })
+      .setLngLat([p.lon, p.lat])
+      .addTo(map);
+    
+    blueMarkers.push(marker);
+  });
+
+  updateDotsVisibility();
+  updateStatus();
+  fitToTrack();
+  if(rawPoints.length > 0) openViewer(rawPoints[0].index);
+}
+
+/* ========================
+   RED TRACK GENERATION
+======================== */
+function generateRedTrack() {
+  // Determine control points (roughly 1 every 5 points)
+  const cpCount = Math.max(4, Math.round(rawPoints.length / 5));
+  const step = Math.floor(rawPoints.length / (cpCount - 1));
+  
+  // Clear old CPs
+  controlPointMarkers.forEach(m => m.remove());
+  controlPointMarkers = [];
+  controlPoints = [];
+
+  // Pick points
+  for (let i = 0; i < rawPoints.length; i += step) {
+    controlPoints.push([rawPoints[i].lon, rawPoints[i].lat]);
+    if (controlPoints.length >= cpCount - 1) break;
+  }
+  // Ensure last point matches
+  const lastP = rawPoints[rawPoints.length - 1];
+  controlPoints.push([lastP.lon, lastP.lat]);
+
+  // Create CP Markers
+  controlPoints.forEach(cp => createCPMarker(cp));
+  
+  updateRedTrackLine();
+  document.getElementById('showRedTrack').checked = true;
+  document.getElementById('projectPointsBtn').disabled = false;
+  updateStatus();
+}
+
+function createCPMarker(lngLat) {
+  const el = document.createElement('div');
+  el.className = 'control-point-marker';
+  
+  const marker = new mapboxgl.Marker({ element: el, draggable: true })
+    .setLngLat(lngLat)
+    .addTo(map);
+
+  // Remove Logic
+  el.onclick = (e) => {
+    if (removeCPModeActive && controlPointMarkers.length > 3) {
+      e.stopPropagation();
+      marker.remove();
+      controlPointMarkers = controlPointMarkers.filter(m => m !== marker);
+      updateRedTrackLine();
+    }
+  };
+
+  marker.on('drag', updateRedTrackLine);
+  marker.on('dragend', updateRedTrackLine);
+  controlPointMarkers.push(marker);
+  updateControlsVisibility();
+}
+
+function updateRedTrackLine() {
+  // 1. Get current CP coords
+  controlPoints = controlPointMarkers.map(m => { const ll = m.getLngLat(); return [ll.lng, ll.lat]; });
+  
+  // 2. Generate smooth curve
+  const smoothCurve = generateCatmullRomCurve(controlPoints, 30);
+  redTrackLine = turf.lineString(smoothCurve);
+
+  // 3. Render
+  if (map.getLayer('red-track')) map.removeLayer('red-track');
+  if (map.getSource('red-track')) map.removeSource('red-track');
+  
+  map.addSource('red-track', {
+    type: 'geojson',
+    data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
+  });
+  
+  map.addLayer({
+    id: 'red-track', type: 'line', source: 'red-track',
+    paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
+    layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
+  });
+}
+
+/* ========================
+   PROJECT TO RED DOTS - WITH IMAGE ASSOCIATION
+======================== */
+function projectPointsToRed() {
+  if (!redTrackLine) return;
+
+  // Clear existing red markers
+  redMarkers.forEach(item => item.marker.remove());
+  redMarkers = [];
+
+  const blueTrack = turf.lineString(rawPoints.map(p => [p.lon, p.lat]));
+  const blueLen = turf.length(blueTrack);
+  const redLen = turf.length(redTrackLine);
+
+  let cumulativeDist = 0;
+
+  rawPoints.forEach((p, idx) => {
+    if (idx > 0) {
+      const prev = rawPoints[idx-1];
+      cumulativeDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
+    }
+    
+    // Find proportional spot on red line
+    const ratio = blueLen > 0 ? cumulativeDist / blueLen : 0;
+    const pointOnRed = turf.along(redTrackLine, ratio * redLen);
+    const coord = pointOnRed.geometry.coordinates;
+
+    // Create New Red Marker
+    // idx is 0-based, blue dots start at index 2
+    const imageIndex = p.index; // Store original image index from blue dot
+    createRedMarker(coord, idx, imageIndex);
+  });
+
+  document.getElementById('showRedDots').checked = true;
+  document.getElementById('dragMode').disabled = false;
+  document.getElementById('exportBtn').disabled = false;
+  updateStatus();
+}
+
+function createRedMarker(coord, sequentialIndex, imageIndex) {
+  const el = document.createElement('div');
+  el.className = 'custom-marker red-dot';
+  el.innerText = sequentialIndex; // Show sequential index (0, 1, 2...)
+  el.title = `Image ${imageIndex}`; // Tooltip shows original image index
+
+  const marker = new mapboxgl.Marker({ element: el, draggable: false })
+    .setLngLat(coord)
+    .addTo(map);
+
+  // Store marker + data
+  const markerObj = {
+    marker: marker,
+    data: {
+      lon: coord[0],
+      lat: coord[1],
+      sequentialIndex: sequentialIndex, // Current position in sequence (0, 1, 2...)
+      imageIndex: imageIndex, // Original image ID from blue dot (2, 3, 4...)
+      associatedImage: imagesByIndex[imageIndex] // Direct image URL reference
+    }
+  };
+  
+  // Click Logic: Delete or Open Viewer
+  el.onclick = (e) => {
+    // If Remove Point Mode is active
+    if (removePointModeActive) {
+      deleteRedPoint(markerObj);
+      return;
+    }
+    
+    // If not in any editing mode, open the associated image
+    if (!dragModeActive && !removePointModeActive) {
+      openViewer(imageIndex);
+    }
+  };
+  
+  // Drag Setup
+  marker.on('dragstart', () => {
+    if (!dragModeActive) marker.setDraggable(false);
+  });
+  
+  marker.on('drag', () => {
+    const ll = marker.getLngLat();
+    const point = turf.point([ll.lng, ll.lat]);
+    const snapped = turf.nearestPointOnLine(redTrackLine, point);
+    marker.setLngLat(snapped.geometry.coordinates);
+    markerObj.data.lon = snapped.geometry.coordinates[0];
+    markerObj.data.lat = snapped.geometry.coordinates[1];
+  });
+
+  redMarkers.push(markerObj);
+  updateDotsVisibility();
+}
+
+/* ========================
+   DELETE & RE-INDEX RED DOTS WITH IMAGE REMOVAL
+======================== */
+function deleteRedPoint(targetObj) {
+  // 1. Get the image index being deleted
+  const deletedImageIndex = targetObj.data.imageIndex;
+  
+  // 2. Remove from Map
+  targetObj.marker.remove();
+
+  // 3. Remove from Array
+  const indexToRemove = redMarkers.indexOf(targetObj);
+  if (indexToRemove > -1) {
+    redMarkers.splice(indexToRemove, 1);
+  }
+
+  // 4. Re-index remaining dots sequentially (0, 1, 2...)
+  redMarkers.forEach((item, newSeqIndex) => {
+    item.data.sequentialIndex = newSeqIndex;
+    item.marker.getElement().innerText = newSeqIndex; // Update visual number
+  });
+
+  // 5. Update status and show feedback
+  updateStatus();
+  console.log(`Deleted red dot #${targetObj.data.sequentialIndex}, image ${deletedImageIndex} removed from sequence`);
+}
+
+/* ========================
+   UI & TOGGLES
+======================== */
+function updateDotsVisibility() {
+  const showBlue = document.getElementById('showBlueDots').checked;
+  const showRed = document.getElementById('showRedDots').checked;
+  
+  blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
+  redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
+}
+
+function updateControlsVisibility() {
+  const show = document.getElementById('showControlPoints').checked;
+  controlPointMarkers.forEach(m => m.getElement().style.display = show ? 'block' : 'none');
+}
+
+function updateStatus() {
+  document.getElementById('blueCount').innerText = blueMarkers.length;
+  document.getElementById('projectedCount').innerText = redMarkers.length;
+  
+  // Show image range if we have red markers
+  if (redMarkers.length > 0) {
+    const firstImage = redMarkers[0].data.imageIndex;
+    const lastImage = redMarkers[redMarkers.length - 1].data.imageIndex;
+    document.getElementById('viewer-meta').textContent = 
+      `Images: ${firstImage} → ${lastImage} (${redMarkers.length} points)`;
+  }
+}
+
+document.getElementById('showBlueDots').onchange = updateDotsVisibility;
+document.getElementById('showRedDots').onchange = updateDotsVisibility;
+
+document.getElementById('showBlueTrack').onchange = (e) => {
+  if (map.getLayer('blue-track')) map.setLayoutProperty('blue-track', 'visibility', e.target.checked ? 'visible' : 'none');
+};
+document.getElementById('showRedTrack').onchange = (e) => {
+  if (map.getLayer('red-track')) map.setLayoutProperty('red-track', 'visibility', e.target.checked ? 'visible' : 'none');
+};
+document.getElementById('showControlPoints').onchange = updateControlsVisibility;
+
+// MODES
+document.getElementById('addCPMode').onchange = (e) => {
+  addCPModeActive = e.target.checked;
+  removeCPModeActive = false; document.getElementById('removeCPMode').checked = false;
+  map.getCanvas().style.cursor = addCPModeActive ? 'crosshair' : '';
+};
+
+document.getElementById('removeCPMode').onchange = (e) => {
+  removeCPModeActive = e.target.checked;
+  addCPModeActive = false; document.getElementById('addCPMode').checked = false;
+  map.getCanvas().style.cursor = '';
+};
+
+document.getElementById('dragMode').onchange = (e) => {
+  dragModeActive = e.target.checked;
+  removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+  
+  redMarkers.forEach(m => {
+    m.marker.setDraggable(dragModeActive);
+    m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
+  });
+};
+
+document.getElementById('removePointMode').onchange = (e) => {
+  removePointModeActive = e.target.checked;
+  dragModeActive = false; document.getElementById('dragMode').checked = false;
+
+  redMarkers.forEach(m => {
+    m.marker.setDraggable(false);
+    const el = m.marker.getElement();
+    if (removePointModeActive) {
+      el.classList.add('delete-cursor');
+    } else {
+      el.classList.remove('delete-cursor');
+      el.style.cursor = 'pointer';
+    }
+  });
+};
+
+/* ========================
+   MAP EVENTS
+======================== */
+map.on('click', (e) => {
+  // Add CP Logic
+  if (addCPModeActive && redTrackLine) {
+    const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
+    const snapped = turf.nearestPointOnLine(redTrackLine, point);
+    
+    // Find index to insert based on distance
+    const snapDist = snapped.properties.location;
+    let insertIndex = controlPoints.length; 
+    
+    // Simple heuristic: distance along line logic is complex to implement perfectly 
+    // without rebuilding line data structure, so we just append close to where clicked
+    // for this demo or re-sort.
+    // Better: Re-sort control points by proximity to start? 
+    // Simple for now: Just add and re-generate.
+    
+    createCPMarker(snapped.geometry.coordinates);
+    
+    // Sort CPs by proximity along track? 
+    // Actually, simple sorting by index isn't enough if loop.
+    // We will just push for now. 
+    updateRedTrackLine();
+  }
+});
+
+/* ========================
+   VIEWER & HELPERS
+======================== */
+function openViewer(id) {
+  // Find point in rawPoints
+  const p = rawPoints.find(rp => rp.index === id);
+  if(!p) return;
+  
+  document.getElementById('empty-msg').style.display = 'none';
+  if(panoViewer) panoViewer.destroy();
+  
+  if(imagesByIndex[id]) {
+    panoViewer = pannellum.viewer('panorama', {
+      type: 'equirectangular', panorama: imagesByIndex[id],
+      autoLoad: true, showControls: true, compass: true,
+    });
+  }
+  
+  // Highlight Blue Dot
+  document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
+  const activeMarker = blueMarkers.find(m => m.getElement().innerText == id);
+  if(activeMarker) activeMarker.getElement().classList.add('active');
+
+  map.easeTo({ center: [p.lon, p.lat] });
+  document.getElementById('viewer-title').innerText = `Point ${id}`;
+}
+
+function fitToTrack() {
+  if(!rawPoints.length) return;
+  const b = new mapboxgl.LngLatBounds();
+  rawPoints.forEach(p => b.extend([p.lon, p.lat]));
+  map.fitBounds(b, { padding: 50 });
+}
+
+/* ========================
+   BUTTON LISTENERS
+======================== */
+document.getElementById('generateRedBtn').onclick = generateRedTrack;
+document.getElementById('projectPointsBtn').onclick = projectPointsToRed;
+document.getElementById('fitBtn').onclick = fitToTrack;
+
+document.getElementById('exportBtn').onclick = () => {
+  const exportData = { 
+    points: redMarkers.map(m => ({ 
+      sequentialIndex: m.data.sequentialIndex, // Export sequential index (0, 1, 2...)
+      originalImageIndex: m.data.imageIndex, // Original blue dot image index
+      lat: m.data.lat, 
+      lon: m.data.lon,
+      imageUrl: m.data.associatedImage // Optional: include image URL
+    }))
+  };
+  
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'smoothed_path_with_images.json';
+  a.click();
+};
+
+document.getElementById('jsonInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if(f) processRawPoints(JSON.parse(await f.text()).points);
+};
+
+// Start
+loadDefaultData();
+</script>
+</body>
+</html>
