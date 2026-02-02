@@ -4876,10 +4876,26 @@ function updateDivorceButton() {
 
 // Export index.json with all data including marriages
 function exportIndexJson() {
-    // Collect all image files
+    // Collect all image files - prefer current local images over manifest
     const allFiles = [];
     const gpxFiles = [];
     const yawfixes = {};
+
+    // If local images are loaded, export their filenames
+    if (currentImages && currentImages.length > 0) {
+        // Build list of image filenames from currently loaded images
+        // Handle sparse arrays and extract image numbers
+        currentImages.forEach((img, idx) => {
+            if (img && img.filename) {
+                allFiles.push(img.filename);
+            } else if (img && img.imageNumber !== undefined) {
+                allFiles.push(`img${img.imageNumber}.jpg`);
+            }
+        });
+    } else if (window.loadedManifestFiles) {
+        // Fallback to existing manifest if no local images
+        allFiles.push(...window.loadedManifestFiles);
+    }
 
     allTracks.forEach((track, trackId) => {
         const gpxName = track.name.endsWith('.gpx') ? track.name : `${track.name}.gpx`;
@@ -4892,16 +4908,11 @@ function exportIndexJson() {
 
     // Build the export object
     const exportData = {
-        files: allFiles, // Will be populated from existing manifest or empty
+        files: allFiles,
         gpxFiles: gpxFiles,
         yawfixes: yawfixes,
         marriages: marriageGroups
     };
-
-    // Try to preserve existing files array from loaded manifest
-    if (window.loadedManifestFiles) {
-        exportData.files = window.loadedManifestFiles;
-    }
 
     const jsonString = JSON.stringify(exportData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
@@ -4915,7 +4926,8 @@ function exportIndexJson() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    setStatus(`Exported index.json with ${marriageGroups.length} marriage groups`);
+    const imageInfo = allFiles.length > 0 ? `, ${allFiles.length} images` : ', no images';
+    setStatus(`Exported index.json with ${marriageGroups.length} marriage groups${imageInfo}`);
 }
 
 // Import index.json
