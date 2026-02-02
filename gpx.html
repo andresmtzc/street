@@ -553,8 +553,25 @@
         </div>
     </div>
 </div>
-    
-    
+
+    <div class="control-group">
+        <div class="slider-label">
+            <span>Yaw Fix (Rotation):</span>
+            <small id="yaw-value">0°</small>
+        </div>
+        <div style="display:flex;gap:3px;margin:5px 0;flex-wrap:wrap;">
+            <button class="small-btn" onclick="adjustYaw(-90)" style="flex:1;">-90°</button>
+            <button class="small-btn" onclick="adjustYaw(-45)" style="flex:1;">-45°</button>
+            <button class="small-btn" onclick="adjustYaw(0)" style="flex:1;">0°</button>
+            <button class="small-btn" onclick="adjustYaw(45)" style="flex:1;">+45°</button>
+            <button class="small-btn" onclick="adjustYaw(90)" style="flex:1;">+90°</button>
+        </div>
+        <div class="slider-label">
+            <input type="range" min="-180" max="180" value="0" class="slider" id="yaw-slider" step="1">
+        </div>
+    </div>
+
+
     <div class="control-group">
         <div class="slider-label"><span>Image Overlay:</span></div>
         <input type="text" id="overlay-url" placeholder="Image URL" style="width:100%;box-sizing:border-box;padding:6px;margin:4px 0;border:1px solid #ddd;border-radius:4px;font-size:12px;">
@@ -730,7 +747,7 @@ function initializeApp() {
     // Initialize Mapbox map
     map = new mapboxgl.Map({
         container: 'map',
-        style: 'mapbox://styles/mapbox/outdoors-v12',
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
         center: [0, 0],
         zoom: 1,
         cooperativeGestures: false
@@ -755,7 +772,18 @@ function initializeApp() {
         // Setup marble spacing slider
         const marbleSpacingSlider = document.getElementById('marble-spacing-slider');
         marbleSpacingSlider.addEventListener('input', updateMarbleSpacing);
-        
+
+        // Setup yaw slider
+        const yawSlider = document.getElementById('yaw-slider');
+        yawSlider.addEventListener('input', (e) => {
+            const track = getCurrentTrack();
+            if (track) {
+                track.yawFixDeg = parseInt(e.target.value);
+                updateYawDisplay();
+                applyYawToCurrentPanorama();
+            }
+        });
+
         // Create sources for tracks
         map.addSource('tracks-line', {
             type: 'geojson',
@@ -1109,7 +1137,19 @@ function handleGPXUpload(event) {
     try {
         const parser = new DOMParser();
         const gpxDoc = parser.parseFromString(gpxContent, 'text/xml');
-        
+
+        // Try to extract yaw fix from metadata if not provided
+        if (yawFixDeg === 0) {
+            const metadataDesc = gpxDoc.querySelector('metadata desc');
+            if (metadataDesc) {
+                const yawMatch = metadataDesc.textContent.match(/Yaw Fix:\s*(-?\d+)/);
+                if (yawMatch) {
+                    yawFixDeg = parseInt(yawMatch[1]);
+                    console.log(`Loaded yaw fix from GPX metadata: ${yawFixDeg}°`);
+                }
+            }
+        }
+
         // Extract ALL track points with their times
         const trkpts = gpxDoc.querySelectorAll('trkpt');
         const pointsWithTime = [];
@@ -1475,7 +1515,10 @@ function angularDiffDeg(a, b) { // smallest |a-b|
     // Update marble spacing slider to match current track
     document.getElementById('marble-spacing-slider').value = track.marbleSpacing;
     document.getElementById('marble-spacing').textContent = track.marbleSpacing;
-    
+
+    // Update yaw display to match current track
+    updateYawDisplay();
+
     // Update point counts
     document.getElementById('points-count').textContent = track.activePoints.length + ' points';
     document.getElementById('original-count').textContent = 'of ' + track.originalPoints.length;
@@ -2483,6 +2526,52 @@ function removeMarble() {
     updateMarbleDisplay();
     }
 
+// Yaw Fix Functions
+function adjustYaw(degrees) {
+    const track = getCurrentTrack();
+    if (!track) {
+        setStatus('Please select a track first');
+        return;
+    }
+
+    if (degrees === 0) {
+        // Reset button - set to 0
+        track.yawFixDeg = 0;
+    } else {
+        // Relative adjustment buttons - add to current value
+        track.yawFixDeg = (track.yawFixDeg || 0) + degrees;
+    }
+
+    // Normalize to -180 to 180 range
+    while (track.yawFixDeg > 180) track.yawFixDeg -= 360;
+    while (track.yawFixDeg < -180) track.yawFixDeg += 360;
+
+    // Update UI
+    updateYawDisplay();
+
+    // Apply to current panorama if viewing
+    applyYawToCurrentPanorama();
+
+    setStatus(`Yaw set to ${track.yawFixDeg}°`);
+}
+
+function updateYawDisplay() {
+    const track = getCurrentTrack();
+    const yaw = track ? (track.yawFixDeg || 0) : 0;
+    document.getElementById('yaw-value').textContent = `${yaw}°`;
+    document.getElementById('yaw-slider').value = yaw;
+}
+
+function applyYawToCurrentPanorama() {
+    // If we have a panorama viewer active, rotate it
+    if (window.viewer && window.viewer.isLoaded()) {
+        const track = getCurrentTrack();
+        const yaw = track ? (track.yawFixDeg || 0) : 0;
+        const currentYaw = viewer.getYaw();
+        viewer.setYaw(currentYaw + yaw - (track._lastAppliedYaw || 0));
+        track._lastAppliedYaw = yaw;
+    }
+}
 
 function respaceAllMarbles() {
     const track = getCurrentTrack();
@@ -3432,9 +3521,21 @@ function validateImageAssignment() {
     // Generate GPX for a single track
    function generateGPX(track) {
     const coordinates = track.activePoints.map(p => p.coordinates);
-    
+
+    // Collect image indices that are used
+    const usedImageIndices = track.marbles
+        .filter(m => m.assignedImage !== null)
+        .map(m => m.assignedImage)
+        .sort((a, b) => a - b);
+
+    const imageFilenames = usedImageIndices.map(idx => `img${idx}.jpg`).join(', ');
+    const yawFix = track.yawFixDeg || 0;
+
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="GPX Editor" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <desc>Yaw Fix: ${yawFix}° | Required Images: ${imageFilenames || 'none'}</desc>
+  </metadata>
   <trk>
     <name>${escapeXML(track.name)}_edited</name>
     <trkseg>
