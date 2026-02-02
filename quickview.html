@@ -80,6 +80,13 @@
 
     /* Red Dots (Projected) */
     .red-dot { background-color: #ff4444; border-color: #fff; z-index: 10; }
+    .red-dot.active {
+      background-color: #00ffff !important;
+      border-color: #000;
+      transform: scale(1.5);
+      z-index: 20;
+      box-shadow: 0 0 12px #00ffff;
+    }
     .red-dot:hover { z-index: 15; transform: scale(1.2); }
     
     /* Delete Cursor */
@@ -453,8 +460,8 @@ function projectPointsToRed() {
 function createRedMarker(coord, sequentialIndex, imageIndex) {
   const el = document.createElement('div');
   el.className = 'custom-marker red-dot';
-  el.innerText = sequentialIndex; // Show sequential index (0, 1, 2...)
-  el.title = `Image ${imageIndex}`; // Tooltip shows original image index
+  el.innerText = imageIndex; // Show original image index (2, 3, 4...)
+  el.title = `Sequence ${sequentialIndex}`; // Tooltip shows sequential position
 
   const marker = new mapboxgl.Marker({ element: el, draggable: false })
     .setLngLat(coord)
@@ -521,9 +528,9 @@ function deleteRedPoint(targetObj) {
   }
 
   // 4. Re-index remaining dots sequentially (0, 1, 2...)
+  // Visual number (imageIndex) stays the same, only internal sequentialIndex updates
   redMarkers.forEach((item, newSeqIndex) => {
     item.data.sequentialIndex = newSeqIndex;
-    item.marker.getElement().innerText = newSeqIndex; // Update visual number
   });
 
   // 5. Update status and show feedback
@@ -656,10 +663,15 @@ function openViewer(id) {
     });
   }
   
-  // Highlight Blue Dot
+  // Highlight Blue and Red Dots
   document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
-  const activeMarker = blueMarkers.find(m => m.getElement().innerText == id);
-  if(activeMarker) activeMarker.getElement().classList.add('active');
+  document.querySelectorAll('.red-dot').forEach(el => el.classList.remove('active'));
+
+  const activeBlueMarker = blueMarkers.find(m => m.getElement().innerText == id);
+  if(activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
+
+  const activeRedMarker = redMarkers.find(m => m.data.imageIndex == id);
+  if(activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
 
   map.easeTo({ center: [p.lon, p.lat] });
   document.getElementById('viewer-title').innerText = `Point ${id}`;
