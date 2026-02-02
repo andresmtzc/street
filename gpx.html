@@ -2948,7 +2948,7 @@ function updateMarbleDisplay() {
     allTracks.forEach((track, trackId) => {
         track.marbles.forEach((marble, index) => {
             const hasImage = marble.assignedImage !== null;
-            const imageIndex = hasImage ? marble.assignedImage + 1 : 0;
+            const imageIndex = hasImage ? marble.assignedImage : 0; // Use actual image number
             const isWaypoint = marble.isWaypoint || false;
             const isFromCurrentTrack = (trackId === currentTrackId);
 
@@ -3449,9 +3449,9 @@ function validateImageAssignment() {
     
     // ADD MARBLES AS WAYPOINTS (preserve waypoint info if available)
     track.marbles.forEach((marble, index) => {
-        const imageInfo = marble.assignedImage !== null ? 
-            ` - Image ${marble.assignedImage + 1}` : '';
-        
+        const imageInfo = marble.assignedImage !== null ?
+            ` - Image ${marble.assignedImage}` : ''; // Use actual image number
+
         // Use original waypoint name if available, otherwise generate one
         const name = marble.originalName || `Photo_${index + 1}`;
         const desc = marble.description || `Marble position along route${imageInfo}`;
@@ -3870,7 +3870,7 @@ function showMarbleImage(marbleId) {
     
     const imageIndex = marble.assignedImage;
     showImageByIndex(imageIndex, true);
-    setStatus(`Showing image ${imageIndex + 1}/${currentImages.length} for marble ${marble.index + 1}`);
+    setStatus(`Showing image ${imageIndex} for marble ${marble.index + 1}`);
 
     // NEW: update branch buttons after showing this image
 
