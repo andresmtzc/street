@@ -3815,8 +3815,14 @@ function showImageInViewer(imageUrl, imageData) {
 
 // ===== IMAGE NAVIGATION =====
 function nextImage() {
-    if (currentImageIndex < currentImages.length - 1) {
-        currentImageIndex++;
+    // Find next available image in sparse array
+    let nextIndex = currentImageIndex + 1;
+    while (nextIndex < currentImages.length && !currentImages[nextIndex]) {
+        nextIndex++;
+    }
+
+    if (nextIndex < currentImages.length && currentImages[nextIndex]) {
+        currentImageIndex = nextIndex;
         isGoingForward = true;
         showImageByIndex(currentImageIndex);
         updateNavigationRing(true); // ← Instant change
@@ -3827,8 +3833,14 @@ function nextImage() {
 }
 
 function previousImage() {
-    if (currentImageIndex > 0) {
-        currentImageIndex--;
+    // Find previous available image in sparse array
+    let prevIndex = currentImageIndex - 1;
+    while (prevIndex >= 0 && !currentImages[prevIndex]) {
+        prevIndex--;
+    }
+
+    if (prevIndex >= 0 && currentImages[prevIndex]) {
+        currentImageIndex = prevIndex;
         isGoingForward = false;
         showImageByIndex(currentImageIndex);
         updateNavigationRing(true); // ← Instant change
@@ -4110,9 +4122,10 @@ function updateViewCone() {
 
     // 2. GET USER OFFSET (convert yaw to degrees and apply to path)
     const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
-    const finalHeading = (pathBearing + userYawDeg + 360) % 360;
+    const yawFix = track.yawFixDeg || 0; // Apply per-track yaw correction
+    const finalHeading = (pathBearing + userYawDeg + yawFix + 360) % 360;
 
-    console.log('Path bearing:', pathBearing, 'User yaw:', userYawDeg, 'Final heading:', finalHeading);
+    console.log('Path bearing:', pathBearing, 'User yaw:', userYawDeg, 'Yaw fix:', yawFix, 'Final heading:', finalHeading);
 
     const fovH = getHorizontalFovDeg();
     const radiusMeters = 15;
