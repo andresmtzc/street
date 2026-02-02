@@ -1233,28 +1233,29 @@ function parseWaypointsFromGPX(gpxDoc, trackData) {
 
 function extractImageIndexFromWaypoint(name, description) {
     // Try to extract image index from waypoint name or description
-    // Looks for patterns like "Image 1" or "Photo_1" etc.
-    
+    // Looks for patterns like "Image 2" or "Photo_1" etc.
+    // Returns the ACTUAL image number (not 0-based), e.g., "Image 2" → 2
+
     const text = (name + ' ' + description).toLowerCase();
-    
-    // Look for "image X" pattern
+
+    // Look for "image X" pattern (e.g., "Image 2" → 2)
     const imageMatch = text.match(/image[^\d]*(\d+)/);
     if (imageMatch) {
-        return parseInt(imageMatch[1]) - 1; // Convert to 0-based index
+        return parseInt(imageMatch[1]); // Keep actual image number
     }
-    
-    // Look for "photo X" pattern  
+
+    // Look for "photo X" pattern
     const photoMatch = text.match(/photo[^\d]*(\d+)/);
     if (photoMatch) {
-        return parseInt(photoMatch[1]) - 1;
+        return parseInt(photoMatch[1]); // Keep actual number
     }
-    
+
     // Look for numbers at the end of the name
     const numberMatch = name.match(/(\d+)$/);
     if (numberMatch) {
-        return parseInt(numberMatch[1]) - 1;
+        return parseInt(numberMatch[1]); // Keep actual number
     }
-    
+
     return null; // No image index found
 }
 
@@ -3247,25 +3248,58 @@ function loadLocalFrames(files) {
         }
     });
 
-    // Create object URLs for each image
-    currentImages = imageFiles.map((file, i) => ({
-        url: URL.createObjectURL(file),
-        index: i,
-        filename: file.name,
-        timestamp: file.name,
-        sequence: i
-    }));
+    // Check if marbles already exist from GPX waypoints
+    const hasWaypoints = track.marbles && track.marbles.length > 0 && track.marbles.some(m => m.isWaypoint);
+
+    if (hasWaypoints) {
+        // Waypoints exist - match images by extracting number from filename
+        // Build a map: imageNumber → imageData
+        const imagesByNumber = {};
+        imageFiles.forEach((file, seqIndex) => {
+            const match = file.name.match(/(\d+)/); // Extract first number from filename
+            if (match) {
+                const imageNum = parseInt(match[1]);
+                imagesByNumber[imageNum] = {
+                    url: URL.createObjectURL(file),
+                    index: imageNum, // Use actual image number
+                    filename: file.name,
+                    timestamp: file.name,
+                    sequence: seqIndex,
+                    imageNumber: imageNum
+                };
+            }
+        });
+
+        // Create sparse array using highest image number as max index
+        const maxImageNum = Math.max(...Object.keys(imagesByNumber).map(k => parseInt(k)));
+        currentImages = new Array(maxImageNum + 1);
+
+        // Fill in the images we have
+        Object.entries(imagesByNumber).forEach(([num, img]) => {
+            currentImages[parseInt(num)] = img;
+        });
+
+        setStatus(`Loaded ${Object.keys(imagesByNumber).length} images - matched to ${track.marbles.length} waypoints`);
+    } else {
+        // No waypoints - sequential assignment (original behavior)
+        currentImages = imageFiles.map((file, i) => ({
+            url: URL.createObjectURL(file),
+            index: i,
+            filename: file.name,
+            timestamp: file.name,
+            sequence: i
+        }));
+
+        // Auto-create marbles distributed along track
+        initializeMarbles();
+        setStatus(`Loaded ${currentImages.length} local frames - marbles created`);
+    }
 
     currentImageIndex = -1;
 
     // Update UI
-    document.getElementById('local-frames-count').textContent = `${currentImages.length} loaded`;
+    document.getElementById('local-frames-count').textContent = `${imageFiles.length} loaded`;
     updateImageCount();
-
-    // Auto-create marbles distributed along track
-    initializeMarbles();
-
-    setStatus(`Loaded ${currentImages.length} local frames - marbles created`);
 }
 
     function clear360Images() {
@@ -3704,9 +3738,10 @@ function previousImage() {
 }
 
 function showImageByIndex(index, preserveOrientation = false) {
-    if (index >= 0 && index < currentImages.length) {
+    // Handle sparse arrays (currentImages might have undefined entries)
+    if (index >= 0 && index < currentImages.length && currentImages[index]) {
         const image = currentImages[index];
-        
+
         // CHECK IF IMAGE IS PRELOADED
         if (preloadedImages[image.url]) {
             console.log('Image already preloaded - instant display');
@@ -3723,9 +3758,11 @@ function showImageByIndex(index, preserveOrientation = false) {
             updateViewerUI();
             highlightMarbleWithImage(index);
                     }
-        
+
         // PRELOAD ADJACENT IMAGES FOR NEXT NAVIGATION
         preloadAdjacentImages();
+    } else {
+        console.warn(`Image at index ${index} not found - sparse array or missing image`);
     }
 }
 
