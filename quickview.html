@@ -197,6 +197,7 @@
         </div>
 
         <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
+        <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
       </div>
 
       <div class="panel-section">
@@ -465,6 +466,7 @@ function projectPointsToRed() {
   document.getElementById('showRedDots').checked = true;
   document.getElementById('dragMode').disabled = false;
   document.getElementById('exportBtn').disabled = false;
+  document.getElementById('exportGpxBtn').disabled = false;
   updateStatus();
 }
 
@@ -729,6 +731,47 @@ document.getElementById('exportBtn').onclick = () => {
   a.click();
 };
 
+document.getElementById('exportGpxBtn').onclick = () => {
+  if (!redTrackLine || redMarkers.length === 0) return;
+
+  // Get the smooth curve coordinates from the red track
+  const curveCoords = redTrackLine.geometry.coordinates;
+
+  // Build GPX XML
+  let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  gpx += '<gpx version="1.1" creator="Quickview Editor" xmlns="http://www.topografix.com/GPX/1/1">\n';
+  gpx += '  <trk>\n';
+  gpx += '    <name>smoothed_track</name>\n';
+  gpx += '    <trkseg>\n';
+
+  // Add track points (the smooth curve)
+  curveCoords.forEach(coord => {
+    gpx += `      <trkpt lat="${coord[1]}" lon="${coord[0]}"></trkpt>\n`;
+  });
+
+  gpx += '    </trkseg>\n';
+  gpx += '  </trk>\n';
+
+  // Add waypoints (red markers with photo references)
+  redMarkers.forEach((m, idx) => {
+    const imageIndex = m.data.imageIndex;
+    const photoNum = idx + 1; // Sequential photo number for naming
+    gpx += `  <wpt lat="${m.data.lat}" lon="${m.data.lon}">\n`;
+    gpx += `    <name>Photo_${photoNum} - Image ${imageIndex}</name>\n`;
+    gpx += `    <desc>Marble position along route - Image ${imageIndex}</desc>\n`;
+    gpx += `  </wpt>\n`;
+  });
+
+  gpx += '</gpx>';
+
+  // Download
+  const blob = new Blob([gpx], {type: 'application/gpx+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'smoothed_track.gpx';
+  a.click();
+};
+
 document.getElementById('jsonInput').onchange = async (e) => {
   const f = e.target.files[0];
   if(f) processRawPoints(JSON.parse(await f.text()).points);
@@ -796,6 +839,7 @@ function clearAll() {
   // Reset buttons
   document.getElementById('projectPointsBtn').disabled = true;
   document.getElementById('exportBtn').disabled = true;
+  document.getElementById('exportGpxBtn').disabled = true;
   document.getElementById('dragMode').disabled = true;
 
   // Reset modes
@@ -860,6 +904,7 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('showRedDots').checked = true;
     document.getElementById('dragMode').disabled = false;
     document.getElementById('exportBtn').disabled = false;
+    document.getElementById('exportGpxBtn').disabled = false;
   }
 
   updateStatus();
