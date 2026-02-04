@@ -4130,7 +4130,7 @@ function updateViewCone() {
     // 2. GET USER OFFSET (convert yaw to degrees and apply to path)
     const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
     const yawFix = track.yawFixDeg || 0; // Apply per-track yaw correction
-    const finalHeading = (pathBearing + userYawDeg + yawFix + 360) % 360;
+    const finalHeading = (pathBearing + userYawDeg - yawFix + 360) % 360;
 
     console.log('Path bearing:', pathBearing, 'User yaw:', userYawDeg, 'Yaw fix:', yawFix, 'Final heading:', finalHeading);
 
