@@ -896,10 +896,20 @@ document.getElementById('exportCreatedJsonBtn').onclick = () => {
 };
 
 document.getElementById('imagesInput').onchange = (ev) => {
+  let loadedCount = 0;
   Array.from(ev.target.files).forEach(f => {
+    // Skip hidden files (macOS creates ._ and .DS_Store files)
+    if (f.name.startsWith('.')) return;
+    // Only accept image files
+    if (!/\.(jpg|jpeg|png)$/i.test(f.name)) return;
+
     const m = f.name.match(/\d+/);
-    if (m) imagesByIndex[parseInt(m[0])] = URL.createObjectURL(f);
+    if (m) {
+      imagesByIndex[parseInt(m[0])] = URL.createObjectURL(f);
+      loadedCount++;
+    }
   });
+  console.log(`Loaded ${loadedCount} images`);
   updateMarkerColors();
 };
 
