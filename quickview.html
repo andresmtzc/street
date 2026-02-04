@@ -903,9 +903,10 @@ document.getElementById('imagesInput').onchange = (ev) => {
     // Only accept image files
     if (!/\.(jpg|jpeg|png)$/i.test(f.name)) return;
 
-    const m = f.name.match(/\d+/);
+    // Match the last number before the file extension
+    const m = f.name.match(/(\d+)\.[^.]+$/);
     if (m) {
-      imagesByIndex[parseInt(m[0])] = URL.createObjectURL(f);
+      imagesByIndex[parseInt(m[1])] = URL.createObjectURL(f);
       loadedCount++;
     }
   });
