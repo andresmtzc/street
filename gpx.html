@@ -3164,7 +3164,10 @@ async function load360Images() {
 
     if (currentImages.length > 0) {
       setStatus(`Loaded ${currentImages.length} images for current track`);
-      
+
+      // Find first available image in sparse array
+      const firstAvailableIndex = currentImages.findIndex(img => img !== undefined && img !== null);
+
       // ONLY auto-show first image if we're NOT switching to a specific marble
       if (!isSwitchingToMarble) {
         if (selectedMarbleId) {
@@ -3172,14 +3175,14 @@ async function load360Images() {
           const marble = track.marbles.find(m => m.id === selectedMarbleId);
           if (marble && marble.assignedImage !== null) {
             showImageByIndex(marble.assignedImage);
-          } else {
-            showImageByIndex(0);
+          } else if (firstAvailableIndex >= 0) {
+            showImageByIndex(firstAvailableIndex);
           }
-        } else {
-          showImageByIndex(0);
+        } else if (firstAvailableIndex >= 0) {
+          showImageByIndex(firstAvailableIndex);
         }
       }
-      
+
       startBackgroundPreload(3);
     }
   } catch (error) {
@@ -4148,6 +4151,7 @@ function makeViewConeRing(lat, lon, headingDeg, fovDeg, radiusMeters = 7, steps 
 
 // Get horizontal FOV from vertical FOV
 function getHorizontalFovDeg() {
+    if (!camera) return 90; // Default FOV if camera not initialized
     const vRad = THREE.MathUtils.degToRad(currentFov);
     const hRad = 2 * Math.atan(Math.tan(vRad / 2) * camera.aspect);
     return THREE.MathUtils.radToDeg(hRad);
