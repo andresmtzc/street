@@ -3310,6 +3310,9 @@ function loadLocalFrames(files) {
 
     // Filter for image files ONLY in the root folder (no subdirectories)
     const imageFiles = Array.from(files).filter(file => {
+        // Skip hidden files (macOS creates ._ and .DS_Store files)
+        if (file.name.startsWith('.')) return false;
+
         // Check if image type
         const isImage = file.type.startsWith('image/') ||
             /\.(jpg|jpeg|png|webp)$/i.test(file.name);
@@ -3345,7 +3348,7 @@ function loadLocalFrames(files) {
         // Build a map: imageNumber → imageData
         const imagesByNumber = {};
         imageFiles.forEach((file, seqIndex) => {
-            const match = file.name.match(/(\d+)/); // Extract first number from filename
+            const match = file.name.match(/(\d+)\.[^.]+$/); // Extract last number before extension
             if (match) {
                 const imageNum = parseInt(match[1]);
                 imagesByNumber[imageNum] = {
