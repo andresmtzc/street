@@ -3858,9 +3858,14 @@ function showImageInViewer(imageUrl, imageData) {
         setStatus('Failed to load 360 image: ' + imageUrl);
     };
     
-    const timestamp = new Date().getTime();
-    const urlWithCacheBust = imageUrl + (imageUrl.includes('?') ? '&' : '?') + 't=' + timestamp;
-    img.src = urlWithCacheBust;
+    // Don't add cache-buster to blob URLs - it breaks them
+    if (imageUrl.startsWith('blob:')) {
+        img.src = imageUrl;
+    } else {
+        const timestamp = new Date().getTime();
+        const urlWithCacheBust = imageUrl + (imageUrl.includes('?') ? '&' : '?') + 't=' + timestamp;
+        img.src = urlWithCacheBust;
+    }
 }
 
 // ===== IMAGE NAVIGATION =====
