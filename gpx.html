@@ -1550,10 +1550,13 @@ function angularDiffDeg(a, b) { // smallest |a-b|
     
     // FLY TO THE TRACK BOUNDS
     flyToTrack(track);
-    
-    // Switch to this track's images if available
-    if (imagesByTrackName[track.name]) {
-        currentImages = imagesByTrackName[track.name];
+
+    // Switch to this track's images if available (case-insensitive match)
+    const trackImagesKey = Object.keys(imagesByTrackName).find(
+        key => key.toLowerCase() === track.name.toLowerCase()
+    );
+    if (trackImagesKey) {
+        currentImages = imagesByTrackName[trackImagesKey];
         console.log(`Switched to images for track: ${track.name} (${currentImages.filter(Boolean).length} images)`);
     }
 
@@ -3252,9 +3255,12 @@ async function createImagesFromFramesFolder() {
     return;
   }
 
-  // Skip if local images are already loaded for this track
-  if (imagesByTrackName[track.name] && imagesByTrackName[track.name].filter(Boolean).length > 0) {
-    currentImages = imagesByTrackName[track.name];
+  // Skip if local images are already loaded for this track (case-insensitive match)
+  const trackImagesKey = Object.keys(imagesByTrackName).find(
+    key => key.toLowerCase() === track.name.toLowerCase()
+  );
+  if (trackImagesKey && imagesByTrackName[trackImagesKey].filter(Boolean).length > 0) {
+    currentImages = imagesByTrackName[trackImagesKey];
     setStatus?.(`Using ${currentImages.filter(Boolean).length} local images for "${track.name}"`);
     updateImageCount?.();
     return;
@@ -4100,9 +4106,12 @@ function selectTrackWithoutMapReset(trackId) {
         viewConeMarker = null;
     }
      
-    // Switch to this track's images if available
-    if (imagesByTrackName[track.name]) {
-        currentImages = imagesByTrackName[track.name];
+    // Switch to this track's images if available (case-insensitive match)
+    const trackImagesKey = Object.keys(imagesByTrackName).find(
+        key => key.toLowerCase() === track.name.toLowerCase()
+    );
+    if (trackImagesKey) {
+        currentImages = imagesByTrackName[trackImagesKey];
         console.log(`Switched to images for track: ${track.name} (${currentImages.filter(Boolean).length} images)`);
     }
 
