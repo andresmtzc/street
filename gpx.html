@@ -3249,6 +3249,14 @@ async function createImagesFromFramesFolder() {
     return;
   }
 
+  // Skip if local images are already loaded for this track
+  if (imagesByTrackName[track.name] && imagesByTrackName[track.name].filter(Boolean).length > 0) {
+    currentImages = imagesByTrackName[track.name];
+    setStatus?.(`Using ${currentImages.filter(Boolean).length} local images for "${track.name}"`);
+    updateImageCount?.();
+    return;
+  }
+
   // GPX base name (e.g., Santte2.gpx -> "Santte2")
   const gpxName = (track.name || '').replace(/\.[^.]+$/, '');
   if (!gpxName) {
