@@ -928,8 +928,8 @@ map.addLayer({
         }
     }, 1000);
 
-        // AUTO-LOAD GPX FILES FROM MANIFEST
-        await loadGPXFromManifest();
+        // No auto-loading - user loads GPX files manually
+        setStatus('Ready - load GPX files to begin');
     });
 
     // Initialize 360 viewer
@@ -4950,15 +4950,24 @@ function updateDivorceButton() {
 
 // Export index.json with all data including marriages
 function exportIndexJson() {
-    // Collect all image files - prefer current local images over manifest
+    // Collect all image files from all tracks
     const allFiles = [];
     const gpxFiles = [];
     const yawfixes = {};
 
-    // If local images are loaded, export their filenames
-    if (currentImages && currentImages.length > 0) {
-        // Build list of image filenames from currently loaded images
-        // Handle sparse arrays and extract image numbers
+    // If per-track images are loaded, export all filenames
+    if (Object.keys(imagesByTrackName).length > 0) {
+        Object.values(imagesByTrackName).forEach(trackImages => {
+            if (Array.isArray(trackImages)) {
+                trackImages.forEach(img => {
+                    if (img && img.filename) {
+                        allFiles.push(img.filename);
+                    }
+                });
+            }
+        });
+    } else if (currentImages && currentImages.length > 0) {
+        // Fallback to currentImages if no per-track images
         currentImages.forEach((img, idx) => {
             if (img && img.filename) {
                 allFiles.push(img.filename);
