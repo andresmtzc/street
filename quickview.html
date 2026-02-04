@@ -120,7 +120,7 @@
     </div>
     <div id="viewer-body">
       <div id="panorama"></div>
-      <div id="empty-msg" style="height:100%; display:flex; justify-content:center; align-items:center; color:#555;">Loading...</div>
+      <div id="empty-msg" style="height:100%; display:flex; justify-content:center; align-items:center; color:#555;">Load data to begin</div>
     </div>
   </div>
 
@@ -212,6 +212,16 @@
     <div id="map"></div>
     
     <div id="ui-overlay">
+      <div style="display:flex; flex-direction:column; gap:4px; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 6px;">
+        <label style="font-size:10px; font-weight:bold; color:#26a269;">CREATE BLUE POINTS</label>
+        <input id="gpxInput" type="file" accept=".gpx" style="font-size:11px; max-width: 180px;"/>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input id="numPointsInput" type="number" min="2" value="10" style="width:50px; font-size:11px; padding:2px 4px; background:#222; border:1px solid #444; color:white; border-radius:3px;"/>
+          <span style="font-size:10px; color:#999;">points</span>
+        </div>
+        <button id="generateFromGpxBtn" disabled style="background:#26a269; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Generate Points</button>
+        <button id="exportCreatedJsonBtn" disabled style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Export JSON</button>
+      </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
         <label style="font-size:10px; font-weight:bold; color:#1fb6ff;">LOAD BLUE POINTS</label>
         <input id="jsonInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
@@ -258,8 +268,7 @@ let removeCPModeActive = false;
 let dragModeActive = false;
 let removePointModeActive = false;
 
-const GITHUB_BASE = "https://andresmtzc.github.io/geepeeX/streetview/";
-const DEFAULT_JSON = GITHUB_BASE + "trip_1769904967799.json";
+// Data is loaded via file inputs - no preloading
 
 /* ========================
    CATMULL-ROM SPLINE
@@ -293,15 +302,61 @@ function generateCatmullRomCurve(controlPts, segmentsPerSection = 20) {
 /* ========================
    INITIALIZATION
 ======================== */
-async function loadDefaultData() {
-  try {
-    const response = await fetch(DEFAULT_JSON);
-    const data = await response.json();
-    data.points.forEach(p => imagesByIndex[p.index] = `${GITHUB_BASE}img${p.index}.jpg`);
-    processRawPoints(data.points);
-  } catch (err) {
-    document.getElementById('empty-msg').textContent = "Load local JSON";
+
+// GPX Creation State
+let loadedGpxTrack = null; // Stores parsed GPX track as turf lineString
+
+/* ========================
+   GPX PARSING & POINT GENERATION
+======================== */
+function parseGpxFile(gpxText) {
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(gpxText, 'application/xml');
+  const trkpts = xml.querySelectorAll('trkpt');
+
+  if (trkpts.length === 0) {
+    alert('No track points found in GPX file');
+    return null;
   }
+
+  const coordinates = [];
+  trkpts.forEach(pt => {
+    const lat = parseFloat(pt.getAttribute('lat'));
+    const lon = parseFloat(pt.getAttribute('lon'));
+    if (!isNaN(lat) && !isNaN(lon)) {
+      coordinates.push([lon, lat]);
+    }
+  });
+
+  if (coordinates.length < 2) {
+    alert('GPX file must have at least 2 valid track points');
+    return null;
+  }
+
+  return turf.lineString(coordinates);
+}
+
+function generatePointsFromGpx(trackLine, numPoints) {
+  if (!trackLine || numPoints < 2) return [];
+
+  const totalLength = turf.length(trackLine);
+  const points = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    // Calculate distance for this point (evenly spaced)
+    // i=0 -> distance=0 (start), i=numPoints-1 -> distance=totalLength (end)
+    const distance = (i / (numPoints - 1)) * totalLength;
+    const pointOnLine = turf.along(trackLine, distance);
+    const coord = pointOnLine.geometry.coordinates;
+
+    points.push({
+      index: i + 1, // Starting at 1 as requested
+      lat: coord[1],
+      lon: coord[0]
+    });
+  }
+
+  return points;
 }
 
 function processRawPoints(points) {
@@ -777,6 +832,69 @@ document.getElementById('jsonInput').onchange = async (e) => {
   if(f) processRawPoints(JSON.parse(await f.text()).points);
 };
 
+/* ========================
+   GPX CREATION HANDLERS
+======================== */
+document.getElementById('gpxInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+
+  const gpxText = await f.text();
+  loadedGpxTrack = parseGpxFile(gpxText);
+
+  if (loadedGpxTrack) {
+    document.getElementById('generateFromGpxBtn').disabled = false;
+    const trackLength = turf.length(loadedGpxTrack);
+    console.log(`GPX loaded: ${loadedGpxTrack.geometry.coordinates.length} track points, ${trackLength.toFixed(2)} km`);
+  } else {
+    document.getElementById('generateFromGpxBtn').disabled = true;
+  }
+};
+
+document.getElementById('generateFromGpxBtn').onclick = () => {
+  if (!loadedGpxTrack) return;
+
+  // Check for existing data and warn
+  if (rawPoints.length > 0 || blueMarkers.length > 0) {
+    if (!confirm('This will clear existing data. Continue?')) {
+      return;
+    }
+    clearAll();
+  }
+
+  const numPoints = parseInt(document.getElementById('numPointsInput').value) || 10;
+  if (numPoints < 2) {
+    alert('Minimum 2 points required');
+    return;
+  }
+
+  const generatedPoints = generatePointsFromGpx(loadedGpxTrack, numPoints);
+
+  if (generatedPoints.length > 0) {
+    processRawPoints(generatedPoints);
+    document.getElementById('exportCreatedJsonBtn').disabled = false;
+    console.log(`Generated ${generatedPoints.length} points from GPX`);
+  }
+};
+
+document.getElementById('exportCreatedJsonBtn').onclick = () => {
+  if (rawPoints.length === 0) return;
+
+  const exportData = {
+    points: rawPoints.map(p => ({
+      index: p.index,
+      lat: p.lat,
+      lon: p.lon
+    }))
+  };
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'blue_points.json';
+  a.click();
+};
+
 document.getElementById('imagesInput').onchange = (ev) => {
   Array.from(ev.target.files).forEach(f => {
     const m = f.name.match(/\d+/);
@@ -841,6 +959,9 @@ function clearAll() {
   document.getElementById('exportBtn').disabled = true;
   document.getElementById('exportGpxBtn').disabled = true;
   document.getElementById('dragMode').disabled = true;
+  document.getElementById('exportCreatedJsonBtn').disabled = true;
+
+  // Reset GPX state (keep loadedGpxTrack so user can regenerate with different point count)
 
   // Reset modes
   addCPModeActive = false;
@@ -910,8 +1031,7 @@ document.getElementById('importRedInput').onchange = async (e) => {
   updateStatus();
 };
 
-// Start
-loadDefaultData();
+// Ready - waiting for user to load data
 </script>
 </body>
 </html>
