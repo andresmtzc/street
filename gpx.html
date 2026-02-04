@@ -781,6 +781,7 @@ function initializeApp() {
                 track.yawFixDeg = parseInt(e.target.value);
                 updateYawDisplay();
                 applyYawToCurrentPanorama();
+                updateViewCone();
             }
         });
 
@@ -2551,6 +2552,9 @@ function adjustYaw(degrees) {
 
     // Apply to current panorama if viewing
     applyYawToCurrentPanorama();
+
+    // Update cone to reflect new yaw
+    updateViewCone();
 
     setStatus(`Yaw set to ${track.yawFixDeg}°`);
 }
