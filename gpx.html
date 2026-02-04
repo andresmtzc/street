@@ -715,6 +715,7 @@ let lastHopBearingDeg = null; // optional bias to "keep going straight"
     // 360 Viewer variables
     let viewer;
     let currentImages = [];
+    let imagesByTrackName = {}; // Per-track image storage: trackName -> sparse array of images
     // Frames folder (same-origin)
     const FRAMES_BASE = 'https://andresmtzc.github.io/geepeeX/senterra/frames/';
     let currentImageIndex = -1;
@@ -1550,9 +1551,15 @@ function angularDiffDeg(a, b) { // smallest |a-b|
     // FLY TO THE TRACK BOUNDS
     flyToTrack(track);
     
+    // Switch to this track's images if available
+    if (imagesByTrackName[track.name]) {
+        currentImages = imagesByTrackName[track.name];
+        console.log(`Switched to images for track: ${track.name} (${currentImages.filter(Boolean).length} images)`);
+    }
+
     // AUTO-LOAD IMAGES WHEN TRACK IS SELECTED
     load360Images();
-    
+
     setStatus(`Selected: ${track.name} - ${track.marbles.length} marbles`);
 }
 
@@ -3334,68 +3341,104 @@ function loadLocalFrames(files) {
         return;
     }
 
-    // Sort by filename (IMG_0001, IMG_0002, etc.)
+    // Sort by filename
     imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
     // Revoke old object URLs to free memory
-    currentImages.forEach(img => {
-        if (img.url && img.url.startsWith('blob:')) {
-            URL.revokeObjectURL(img.url);
+    Object.values(imagesByTrackName).forEach(trackImages => {
+        if (Array.isArray(trackImages)) {
+            trackImages.forEach(img => {
+                if (img && img.url && img.url.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.url);
+                }
+            });
         }
+    });
+    imagesByTrackName = {};
+
+    // Try to parse images with trackName-imageNum pattern (e.g., sierraalta1-5.jpg)
+    // Pattern: {name}{trackNum}-{imageNum}.{ext}
+    const trackPattern = /^(.+?)(\d+)-(\d+)\.[^.]+$/;
+    let parsedCount = 0;
+    let fallbackCount = 0;
+
+    imageFiles.forEach((file, seqIndex) => {
+        const match = file.name.match(trackPattern);
+        if (match) {
+            // Multi-track pattern: baseName + trackNum + imageNum
+            const baseName = match[1]; // e.g., "sierraalta"
+            const trackNum = match[2]; // e.g., "1"
+            const imageNum = parseInt(match[3]); // e.g., "5"
+            const trackName = baseName + trackNum; // e.g., "sierraalta1"
+
+            if (!imagesByTrackName[trackName]) {
+                imagesByTrackName[trackName] = [];
+            }
+
+            const imageData = {
+                url: URL.createObjectURL(file),
+                index: imageNum,
+                filename: file.name,
+                timestamp: file.name,
+                sequence: seqIndex,
+                imageNumber: imageNum,
+                trackName: trackName
+            };
+
+            // Store in sparse array by image number
+            imagesByTrackName[trackName][imageNum] = imageData;
+            parsedCount++;
+        } else {
+            // Fallback: single-track pattern, use last number before extension
+            const singleMatch = file.name.match(/(\d+)\.[^.]+$/);
+            if (singleMatch) {
+                const imageNum = parseInt(singleMatch[1]);
+                const trackName = track.name; // Use current track name
+
+                if (!imagesByTrackName[trackName]) {
+                    imagesByTrackName[trackName] = [];
+                }
+
+                imagesByTrackName[trackName][imageNum] = {
+                    url: URL.createObjectURL(file),
+                    index: imageNum,
+                    filename: file.name,
+                    timestamp: file.name,
+                    sequence: seqIndex,
+                    imageNumber: imageNum,
+                    trackName: trackName
+                };
+                fallbackCount++;
+            }
+        }
+    });
+
+    // Set currentImages to the current track's images
+    currentImages = imagesByTrackName[track.name] || [];
+
+    // Log what was loaded
+    const trackNames = Object.keys(imagesByTrackName);
+    console.log(`Loaded images for ${trackNames.length} tracks:`, trackNames);
+    trackNames.forEach(name => {
+        const count = imagesByTrackName[name].filter(Boolean).length;
+        console.log(`  ${name}: ${count} images`);
     });
 
     // Check if marbles already exist from GPX waypoints
     const hasWaypoints = track.marbles && track.marbles.length > 0 && track.marbles.some(m => m.isWaypoint);
 
-    if (hasWaypoints) {
-        // Waypoints exist - match images by extracting number from filename
-        // Build a map: imageNumber → imageData
-        const imagesByNumber = {};
-        imageFiles.forEach((file, seqIndex) => {
-            const match = file.name.match(/(\d+)\.[^.]+$/); // Extract last number before extension
-            if (match) {
-                const imageNum = parseInt(match[1]);
-                imagesByNumber[imageNum] = {
-                    url: URL.createObjectURL(file),
-                    index: imageNum, // Use actual image number
-                    filename: file.name,
-                    timestamp: file.name,
-                    sequence: seqIndex,
-                    imageNumber: imageNum
-                };
-            }
-        });
-
-        // Create sparse array using highest image number as max index
-        const maxImageNum = Math.max(...Object.keys(imagesByNumber).map(k => parseInt(k)));
-        currentImages = new Array(maxImageNum + 1);
-
-        // Fill in the images we have
-        Object.entries(imagesByNumber).forEach(([num, img]) => {
-            currentImages[parseInt(num)] = img;
-        });
-
-        setStatus(`Loaded ${Object.keys(imagesByNumber).length} images - matched to ${track.marbles.length} waypoints`);
-    } else {
-        // No waypoints - sequential assignment (original behavior)
-        currentImages = imageFiles.map((file, i) => ({
-            url: URL.createObjectURL(file),
-            index: i,
-            filename: file.name,
-            timestamp: file.name,
-            sequence: i
-        }));
-
+    if (!hasWaypoints && currentImages.filter(Boolean).length > 0) {
         // Auto-create marbles distributed along track
         initializeMarbles();
-        setStatus(`Loaded ${currentImages.length} local frames - marbles created`);
     }
 
     currentImageIndex = -1;
 
     // Update UI
-    document.getElementById('local-frames-count').textContent = `${imageFiles.length} loaded`;
+    const totalImages = Object.values(imagesByTrackName).reduce((sum, arr) => sum + arr.filter(Boolean).length, 0);
+    document.getElementById('local-frames-count').textContent = `${totalImages} loaded (${trackNames.length} tracks)`;
     updateImageCount();
+    setStatus(`Loaded ${totalImages} images across ${trackNames.length} tracks`);
 }
 
     function clear360Images() {
@@ -4041,9 +4084,15 @@ function selectTrackWithoutMapReset(trackId) {
         viewConeMarker = null;
     }
      
+    // Switch to this track's images if available
+    if (imagesByTrackName[track.name]) {
+        currentImages = imagesByTrackName[track.name];
+        console.log(`Switched to images for track: ${track.name} (${currentImages.filter(Boolean).length} images)`);
+    }
+
     // IMPORTANT: Load images for the new track
     load360Images();
-    
+
     setStatus(`Switched to: ${track.name} - ${track.marbles.length} marbles`);
 }
 
