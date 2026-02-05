@@ -963,7 +963,19 @@
     "barcelona12.gpx"
   ],
   "yawfixes": {
-    "barcelona4.gpx": 180
+    "barcelona1.gpx": 180,
+    "barcelona4.gpx": 180,
+    "barcelona3.gpx": 180,
+    "barcelona5.gpx": 180,
+    "barcelona8.gpx": 180,
+    "barcelona9.gpx": 180,
+    "barcelona7.gpx": 180,
+    "barcelona11.gpx": 180,
+    "barcelona10.gpx": 180,
+    "barcelona0.gpx": 180,
+    "barcelona2.gpx": 180,
+    "barcelona6.gpx": 180,
+    "barcelona12.gpx": 180
   },
   "marriages": []
 }
