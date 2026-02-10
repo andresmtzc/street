@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Street View Inpainter</title>
+  <link rel="stylesheet" href="inpaint.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Street View Inpainter</h1>
+      <div class="header-right">
+        <button id="loadModelBtn" class="btn btn-secondary" title="Optional: load an ONNX inpainting model for higher quality">
+          Load AI Model (.onnx)
+        </button>
+        <span id="modelStatus" class="status-badge">Built-in mode</span>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="tool-group">
+        <button id="loadImagesBtn" class="btn btn-primary">Load Images</button>
+        <span id="imageCount" class="info-text"></span>
+      </div>
+
+      <div class="tool-group separator">
+        <label class="tool-label">Brush
+          <input type="range" id="brushSize" min="5" max="200" value="40">
+          <span id="brushSizeVal">40</span>px
+        </label>
+        <button id="paintMode" class="btn btn-tool active" title="P">Paint</button>
+        <button id="eraseMode" class="btn btn-tool" title="E">Erase</button>
+        <button id="clearMask" class="btn btn-tool" title="C">Clear</button>
+      </div>
+
+      <div class="tool-group separator">
+        <button id="saveMaskTemplate" class="btn btn-secondary" title="Save current mask as template">Save Template</button>
+        <button id="applyTemplate" class="btn btn-secondary" title="Apply saved template to all images">Apply to All</button>
+        <label class="tool-label" title="Nudge template with arrow keys">
+          Nudge
+          <input type="number" id="nudgeX" value="0" class="nudge-input"> x
+          <input type="number" id="nudgeY" value="0" class="nudge-input"> y
+        </label>
+      </div>
+
+      <div class="tool-group separator">
+        <button id="processCurrent" class="btn btn-accent">Inpaint Current</button>
+        <button id="processAll" class="btn btn-accent">Inpaint All</button>
+        <button id="cancelProcess" class="btn btn-danger" style="display:none">Cancel</button>
+      </div>
+
+      <div class="tool-group separator">
+        <button id="toggleView" class="btn btn-tool" title="Space">Before/After</button>
+        <button id="exportCurrent" class="btn btn-secondary">Save Image</button>
+        <button id="exportAll" class="btn btn-secondary">Export ZIP</button>
+      </div>
+    </div>
+
+    <div class="workspace">
+      <div class="gallery" id="gallery">
+        <div class="gallery-empty">Load images to begin</div>
+      </div>
+
+      <div class="editor" id="editor">
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="imageCanvas"></canvas>
+          <canvas id="maskCanvas"></canvas>
+          <div id="brushCursor" class="brush-cursor"></div>
+          <div class="editor-placeholder" id="editorPlaceholder">
+            <p>Load images to start editing</p>
+            <p class="hint">Supports JPG, PNG, WebP</p>
+          </div>
+        </div>
+        <div class="editor-nav">
+          <button id="prevImage" class="btn btn-tool" title="←">&#9664; Prev</button>
+          <span id="currentInfo" class="info-text"></span>
+          <button id="nextImage" class="btn btn-tool" title="→">Next &#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="progress-bar" id="progressBar">
+      <div class="progress-fill" id="progressFill"></div>
+      <span id="progressText" class="progress-text"></span>
+    </div>
+
+    <div class="instructions" id="instructions">
+      <strong>Shortcuts:</strong>
+      P = Paint &nbsp; E = Erase &nbsp; C = Clear mask &nbsp;
+      [ / ] = Brush size &nbsp; Space = Before/After &nbsp;
+      &#8592;/&#8594; = Prev/Next image &nbsp;
+      Shift+Arrows = Nudge mask
+    </div>
+  </div>
+
+  <input type="file" id="modelInput" accept=".onnx" style="display:none">
+  <input type="file" id="imageInput" accept="image/*" multiple style="display:none">
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="inpaint-worker.js"></script>
+  <script src="inpaint-app.js"></script>
+</body>
+</html>
