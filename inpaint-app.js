@@ -599,13 +599,10 @@ function buildBlendMask(maskRGBA, w, h, featherRadius) {
 
 // ---- ONNX inpainting ----
 async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
-  // Resize to inference size (maintain aspect, pad to multiple of 8)
-  const maxDim = CFG.INFER_SIZE;
-  const scale = maxDim / Math.max(w, h);
-  const iw = Math.ceil(w * scale / 8) * 8;
-  const ih = Math.ceil(h * scale / 8) * 8;
+  // LaMa ONNX model expects fixed 512x512 input
+  const iw = 512, ih = 512;
 
-  // Prepare image tensor
+  // Prepare image tensor — resize to 512x512, normalize to [0, 1]
   const iCanvas = new OffscreenCanvas(iw, ih);
   const iCtx = iCanvas.getContext('2d');
   iCtx.drawImage(imgCanvas, 0, 0, iw, ih);
@@ -613,12 +610,12 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
 
   const imgFloat = new Float32Array(3 * iw * ih);
   for (let i = 0; i < iw * ih; i++) {
-    imgFloat[i] = iData.data[i * 4];                    // R [0,255]
-    imgFloat[iw * ih + i] = iData.data[i * 4 + 1];      // G
-    imgFloat[2 * iw * ih + i] = iData.data[i * 4 + 2];  // B
+    imgFloat[i] = iData.data[i * 4] / 255.0;                    // R [0,1]
+    imgFloat[iw * ih + i] = iData.data[i * 4 + 1] / 255.0;      // G [0,1]
+    imgFloat[2 * iw * ih + i] = iData.data[i * 4 + 2] / 255.0;  // B [0,1]
   }
 
-  // Prepare mask tensor
+  // Prepare mask tensor — resize to 512x512, binarize
   const mCanvas = new OffscreenCanvas(iw, ih);
   const mCtx = mCanvas.getContext('2d');
   mCtx.drawImage(maskCanvas, 0, 0, iw, ih);
@@ -632,7 +629,7 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
   const imgTensor = new ort.Tensor('float32', imgFloat, [1, 3, ih, iw]);
   const maskTensor = new ort.Tensor('float32', maskFloat, [1, 1, ih, iw]);
 
-  // Auto-detect input names
+  // Build feeds — use model's input names, map by shape (3-ch = image, 1-ch = mask)
   const inputs = S.model.inputNames;
   const feeds = {};
   if (inputs.length >= 2) {
@@ -648,6 +645,7 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
   setProgress(0.8, 'Processing result...');
 
   // Convert output back to canvas
+  // LaMa ONNX outputs pixel values already in [0, 255] range
   const outCanvas = new OffscreenCanvas(iw, ih);
   const outCtx = outCanvas.getContext('2d');
   const outImg = outCtx.createImageData(iw, ih);
