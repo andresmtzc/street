@@ -39,7 +39,7 @@ function cacheDom() {
     'brushSize', 'brushSizeVal', 'paintMode', 'eraseMode', 'clearMask',
     'saveMaskTemplate', 'applyTemplate', 'nudgeX', 'nudgeY',
     'processCurrent', 'processAll', 'cancelProcess',
-    'toggleView', 'exportCurrent', 'exportAll',
+    'toggleView', 'exportMask', 'exportCurrent', 'exportAll',
     'gallery', 'editor', 'canvasWrap',
     'imageCanvas', 'maskCanvas', 'brushCursor', 'editorPlaceholder',
     'prevImage', 'nextImage', 'currentInfo',
@@ -86,6 +86,7 @@ function bindEvents() {
   D.cancelProcess.addEventListener('click', () => { S.cancelRequested = true; });
 
   D.toggleView.addEventListener('click', toggleBeforeAfter);
+  D.exportMask.addEventListener('click', exportMaskPNG);
   D.exportCurrent.addEventListener('click', exportCurrentImage);
   D.exportAll.addEventListener('click', exportAllAsZip);
 
@@ -899,6 +900,28 @@ async function toggleBeforeAfter() {
 }
 
 // ---- Export ----
+async function exportMaskPNG() {
+  if (S.idx < 0) return;
+  await saveCurrentMask();
+  // Export mask as a solid white-on-black PNG (standard inpainting format)
+  // White = area to inpaint, Black = keep
+  const w = D.maskCanvas.width, h = D.maskCanvas.height;
+  const maskData = D.maskCanvas.getContext('2d').getImageData(0, 0, w, h);
+  const out = new OffscreenCanvas(w, h);
+  const ctx = out.getContext('2d');
+  const outData = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const val = maskData.data[i * 4 + 3] > 30 ? 255 : 0;
+    outData.data[i * 4] = val;
+    outData.data[i * 4 + 1] = val;
+    outData.data[i * 4 + 2] = val;
+    outData.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(outData, 0, 0);
+  const blob = await canvasToBlob(out, 'image/png');
+  downloadBlob(blob, 'mask.png');
+}
+
 async function exportCurrentImage() {
   if (S.idx < 0) return;
   const img = S.images[S.idx];
