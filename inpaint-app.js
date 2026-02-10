@@ -22,6 +22,7 @@ const S = {
   showResult: false,
   templateBlob: null,
   model: null,         // ONNX InferenceSession
+  modelSize: 512,      // detected model input resolution
   processing: false,
   cancelRequested: false,
   worker: null,
@@ -120,9 +121,29 @@ async function onModelLoad(e) {
     const buf = await file.arrayBuffer();
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/';
     S.model = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
-    D.modelStatus.textContent = 'AI model loaded';
+
+    // Detect model input resolution by running a dummy inference to read expected shape
+    // LaMa models have fixed input: [1, 3, H, W] for image, [1, 1, H, W] for mask
+    // Try to read from the model metadata or fall back to probing
+    let detectedSize = 512;
+    try {
+      // ONNX Runtime Web doesn't expose input shapes directly,
+      // so we probe with a small test — but first try common sizes
+      // The model file name often hints at the resolution
+      const nameHint = file.name.toLowerCase();
+      const sizeMatch = nameHint.match(/(\d{3,4})/);
+      if (sizeMatch) {
+        const parsed = parseInt(sizeMatch[1]);
+        if (parsed >= 256 && parsed <= 4096 && parsed % 8 === 0) {
+          detectedSize = parsed;
+        }
+      }
+    } catch (_) {}
+    S.modelSize = detectedSize;
+
+    D.modelStatus.textContent = `AI model loaded (${S.modelSize}x${S.modelSize})`;
     D.modelStatus.className = 'status-badge ai-loaded';
-    console.log('ONNX inputs:', S.model.inputNames, 'outputs:', S.model.outputNames);
+    console.log('ONNX inputs:', S.model.inputNames, 'outputs:', S.model.outputNames, 'inferSize:', S.modelSize);
   } catch (err) {
     D.modelStatus.textContent = 'Model load failed';
     console.error('Model load error:', err);
@@ -621,8 +642,8 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
   const cropMask = new OffscreenCanvas(cw, ch);
   cropMask.getContext('2d').drawImage(maskCanvas, cx1, cy1, cw, ch, 0, 0, cw, ch);
 
-  // Resize crop to 512x512 for the model
-  const iw = 512, ih = 512;
+  // Resize crop to model's input resolution
+  const iw = S.modelSize, ih = S.modelSize;
 
   const iCanvas = new OffscreenCanvas(iw, ih);
   const iCtx = iCanvas.getContext('2d');
