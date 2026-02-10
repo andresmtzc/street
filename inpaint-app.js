@@ -599,26 +599,48 @@ function buildBlendMask(maskRGBA, w, h, featherRadius) {
 
 // ---- ONNX inpainting ----
 async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
-  // LaMa ONNX model expects fixed 512x512 input
+  // Find bounding box of the mask so we only process the relevant region
+  const maskCtx = maskCanvas.getContext('2d');
+  const fullMask = maskCtx.getImageData(0, 0, w, h);
+  const bbox = getMaskBBox(fullMask.data, w, h);
+  if (!bbox) throw new Error('Empty mask');
+
+  // Expand bbox with context padding (50% on each side, min 64px)
+  const padX = Math.max(64, Math.round((bbox.x2 - bbox.x1) * 0.5));
+  const padY = Math.max(64, Math.round((bbox.y2 - bbox.y1) * 0.5));
+  const cx1 = Math.max(0, bbox.x1 - padX);
+  const cy1 = Math.max(0, bbox.y1 - padY);
+  const cx2 = Math.min(w, bbox.x2 + padX);
+  const cy2 = Math.min(h, bbox.y2 + padY);
+  const cw = cx2 - cx1, ch = cy2 - cy1;
+
+  // Crop image and mask to the region around the mask
+  const cropImg = new OffscreenCanvas(cw, ch);
+  cropImg.getContext('2d').drawImage(imgCanvas, cx1, cy1, cw, ch, 0, 0, cw, ch);
+
+  const cropMask = new OffscreenCanvas(cw, ch);
+  cropMask.getContext('2d').drawImage(maskCanvas, cx1, cy1, cw, ch, 0, 0, cw, ch);
+
+  // Resize crop to 512x512 for the model
   const iw = 512, ih = 512;
 
-  // Prepare image tensor — resize to 512x512, normalize to [0, 1]
   const iCanvas = new OffscreenCanvas(iw, ih);
   const iCtx = iCanvas.getContext('2d');
-  iCtx.drawImage(imgCanvas, 0, 0, iw, ih);
+  iCtx.drawImage(cropImg, 0, 0, iw, ih);
   const iData = iCtx.getImageData(0, 0, iw, ih);
 
+  // Image tensor: normalize to [0, 1], NCHW layout
   const imgFloat = new Float32Array(3 * iw * ih);
   for (let i = 0; i < iw * ih; i++) {
-    imgFloat[i] = iData.data[i * 4] / 255.0;                    // R [0,1]
-    imgFloat[iw * ih + i] = iData.data[i * 4 + 1] / 255.0;      // G [0,1]
-    imgFloat[2 * iw * ih + i] = iData.data[i * 4 + 2] / 255.0;  // B [0,1]
+    imgFloat[i] = iData.data[i * 4] / 255.0;
+    imgFloat[iw * ih + i] = iData.data[i * 4 + 1] / 255.0;
+    imgFloat[2 * iw * ih + i] = iData.data[i * 4 + 2] / 255.0;
   }
 
-  // Prepare mask tensor — resize to 512x512, binarize
+  // Mask tensor: binarize from alpha channel
   const mCanvas = new OffscreenCanvas(iw, ih);
   const mCtx = mCanvas.getContext('2d');
-  mCtx.drawImage(maskCanvas, 0, 0, iw, ih);
+  mCtx.drawImage(cropMask, 0, 0, iw, ih);
   const mData = mCtx.getImageData(0, 0, iw, ih);
 
   const maskFloat = new Float32Array(iw * ih);
@@ -629,7 +651,7 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
   const imgTensor = new ort.Tensor('float32', imgFloat, [1, 3, ih, iw]);
   const maskTensor = new ort.Tensor('float32', maskFloat, [1, 1, ih, iw]);
 
-  // Build feeds — use model's input names, map by shape (3-ch = image, 1-ch = mask)
+  // Build feeds using model's input names
   const inputs = S.model.inputNames;
   const feeds = {};
   if (inputs.length >= 2) {
@@ -639,13 +661,12 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
     throw new Error('Model must have at least 2 inputs (image, mask). Found: ' + inputs.join(', '));
   }
 
-  setProgress(0.3, 'Running AI model...');
+  setProgress(0.3, `Running AI model on ${cw}x${ch} crop...`);
   const results = await S.model.run(feeds);
   const output = results[S.model.outputNames[0]];
   setProgress(0.8, 'Processing result...');
 
-  // Convert output back to canvas
-  // LaMa ONNX outputs pixel values already in [0, 255] range
+  // Convert output to canvas (LaMa ONNX outputs [0, 255])
   const outCanvas = new OffscreenCanvas(iw, ih);
   const outCtx = outCanvas.getContext('2d');
   const outImg = outCtx.createImageData(iw, ih);
@@ -658,12 +679,30 @@ async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
   }
   outCtx.putImageData(outImg, 0, 0);
 
-  // Scale back to original working size
+  // Scale result back to crop size and paste into full-resolution canvas
   const resultCanvas = new OffscreenCanvas(w, h);
   const rCtx = resultCanvas.getContext('2d');
-  rCtx.drawImage(outCanvas, 0, 0, w, h);
+  rCtx.drawImage(imgCanvas, 0, 0); // start with original
+  rCtx.drawImage(outCanvas, 0, 0, iw, ih, cx1, cy1, cw, ch); // paste inpainted crop
 
   return resultCanvas;
+}
+
+function getMaskBBox(maskRGBA, w, h) {
+  let x1 = w, y1 = h, x2 = 0, y2 = 0;
+  let found = false;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRGBA[(y * w + x) * 4 + 3] > 30) {
+        if (x < x1) x1 = x;
+        if (x > x2) x2 = x;
+        if (y < y1) y1 = y;
+        if (y > y2) y2 = y;
+        found = true;
+      }
+    }
+  }
+  return found ? { x1, y1, x2: x2 + 1, y2: y2 + 1 } : null;
 }
 
 // ---- Worker-based inpainting ----
