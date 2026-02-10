@@ -22,6 +22,7 @@ const S = {
   showResult: false,
   templateBlob: null,
   model: null,         // ONNX InferenceSession
+  modelSize: 512,      // detected model input resolution
   processing: false,
   cancelRequested: false,
   worker: null,
@@ -120,9 +121,29 @@ async function onModelLoad(e) {
     const buf = await file.arrayBuffer();
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/';
     S.model = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
-    D.modelStatus.textContent = 'AI model loaded';
+
+    // Detect model input resolution by running a dummy inference to read expected shape
+    // LaMa models have fixed input: [1, 3, H, W] for image, [1, 1, H, W] for mask
+    // Try to read from the model metadata or fall back to probing
+    let detectedSize = 512;
+    try {
+      // ONNX Runtime Web doesn't expose input shapes directly,
+      // so we probe with a small test — but first try common sizes
+      // The model file name often hints at the resolution
+      const nameHint = file.name.toLowerCase();
+      const sizeMatch = nameHint.match(/(\d{3,4})/);
+      if (sizeMatch) {
+        const parsed = parseInt(sizeMatch[1]);
+        if (parsed >= 256 && parsed <= 4096 && parsed % 8 === 0) {
+          detectedSize = parsed;
+        }
+      }
+    } catch (_) {}
+    S.modelSize = detectedSize;
+
+    D.modelStatus.textContent = `AI model loaded (${S.modelSize}x${S.modelSize})`;
     D.modelStatus.className = 'status-badge ai-loaded';
-    console.log('ONNX inputs:', S.model.inputNames, 'outputs:', S.model.outputNames);
+    console.log('ONNX inputs:', S.model.inputNames, 'outputs:', S.model.outputNames, 'inferSize:', S.modelSize);
   } catch (err) {
     D.modelStatus.textContent = 'Model load failed';
     console.error('Model load error:', err);
@@ -597,75 +618,207 @@ function buildBlendMask(maskRGBA, w, h, featherRadius) {
   return blurred;
 }
 
-// ---- ONNX inpainting ----
+// ---- ONNX inpainting (tiled) ----
 async function inpaintWithONNX(imgCanvas, maskCanvas, w, h) {
-  // Resize to inference size (maintain aspect, pad to multiple of 8)
-  const maxDim = CFG.INFER_SIZE;
-  const scale = maxDim / Math.max(w, h);
-  const iw = Math.ceil(w * scale / 8) * 8;
-  const ih = Math.ceil(h * scale / 8) * 8;
+  const maskCtx = maskCanvas.getContext('2d');
+  const fullMask = maskCtx.getImageData(0, 0, w, h);
+  const bbox = getMaskBBox(fullMask.data, w, h);
+  if (!bbox) throw new Error('Empty mask');
 
-  // Prepare image tensor
-  const iCanvas = new OffscreenCanvas(iw, ih);
-  const iCtx = iCanvas.getContext('2d');
-  iCtx.drawImage(imgCanvas, 0, 0, iw, ih);
-  const iData = iCtx.getImageData(0, 0, iw, ih);
+  // Expand bbox with context padding (50% on each side, min 64px)
+  const padX = Math.max(64, Math.round((bbox.x2 - bbox.x1) * 0.5));
+  const padY = Math.max(64, Math.round((bbox.y2 - bbox.y1) * 0.5));
+  const cx1 = Math.max(0, bbox.x1 - padX);
+  const cy1 = Math.max(0, bbox.y1 - padY);
+  const cx2 = Math.min(w, bbox.x2 + padX);
+  const cy2 = Math.min(h, bbox.y2 + padY);
+  const cw = cx2 - cx1, ch = cy2 - cy1;
 
-  const imgFloat = new Float32Array(3 * iw * ih);
-  for (let i = 0; i < iw * ih; i++) {
-    imgFloat[i] = iData.data[i * 4];                    // R [0,255]
-    imgFloat[iw * ih + i] = iData.data[i * 4 + 1];      // G
-    imgFloat[2 * iw * ih + i] = iData.data[i * 4 + 2];  // B
+  // Crop image and mask to the region around the mask
+  const cropImg = new OffscreenCanvas(cw, ch);
+  cropImg.getContext('2d').drawImage(imgCanvas, cx1, cy1, cw, ch, 0, 0, cw, ch);
+  const cropMask = new OffscreenCanvas(cw, ch);
+  cropMask.getContext('2d').drawImage(maskCanvas, cx1, cy1, cw, ch, 0, 0, cw, ch);
+
+  const ts = S.modelSize;
+  let inpaintedCrop;
+
+  if (cw <= ts && ch <= ts) {
+    // Fits in one tile — pad to tile size, run, crop back
+    inpaintedCrop = await processSingleTile(cropImg, cropMask, cw, ch, ts);
+  } else {
+    // Tile with overlap, blend seams
+    inpaintedCrop = await processMultiTile(cropImg, cropMask, cw, ch, ts);
   }
 
-  // Prepare mask tensor
-  const mCanvas = new OffscreenCanvas(iw, ih);
-  const mCtx = mCanvas.getContext('2d');
-  mCtx.drawImage(maskCanvas, 0, 0, iw, ih);
-  const mData = mCtx.getImageData(0, 0, iw, ih);
+  // Paste inpainted crop into full-res canvas
+  const resultCanvas = new OffscreenCanvas(w, h);
+  const rCtx = resultCanvas.getContext('2d');
+  rCtx.drawImage(imgCanvas, 0, 0);
+  rCtx.drawImage(inpaintedCrop, 0, 0, cw, ch, cx1, cy1, cw, ch);
+  return resultCanvas;
+}
 
-  const maskFloat = new Float32Array(iw * ih);
-  for (let i = 0; i < iw * ih; i++) {
+async function processSingleTile(cropImg, cropMask, cw, ch, ts) {
+  const padded = new OffscreenCanvas(ts, ts);
+  padded.getContext('2d').drawImage(cropImg, 0, 0);
+  const paddedMask = new OffscreenCanvas(ts, ts);
+  paddedMask.getContext('2d').drawImage(cropMask, 0, 0);
+
+  setProgress(0.3, `Running AI model (single tile ${ts}x${ts})...`);
+  const resultData = await runONNXTile(padded, paddedMask, ts);
+
+  // Put result into canvas and crop back to original size
+  const tmpCanvas = new OffscreenCanvas(ts, ts);
+  tmpCanvas.getContext('2d').putImageData(new ImageData(resultData, ts, ts), 0, 0);
+  const result = new OffscreenCanvas(cw, ch);
+  result.getContext('2d').drawImage(tmpCanvas, 0, 0, cw, ch, 0, 0, cw, ch);
+  return result;
+}
+
+async function processMultiTile(cropImg, cropMask, cw, ch, ts) {
+  const overlap = Math.round(ts * 0.25);
+  const stride = ts - overlap;
+  const tilesX = Math.max(1, Math.ceil((cw - overlap) / stride));
+  const tilesY = Math.max(1, Math.ceil((ch - overlap) / stride));
+  const totalTiles = tilesX * tilesY;
+
+  // Linear taper weight map for blending overlaps
+  const tileW = buildTileWeights(ts, overlap);
+
+  // Accumulation buffers for weighted blending
+  const accumR = new Float32Array(cw * ch);
+  const accumG = new Float32Array(cw * ch);
+  const accumB = new Float32Array(cw * ch);
+  const accumWt = new Float32Array(cw * ch);
+
+  let done = 0;
+  for (let ty = 0; ty < tilesY; ty++) {
+    for (let tx = 0; tx < tilesX; tx++) {
+      // Tile origin, clamped so tiles don't exceed crop bounds
+      const x0 = Math.min(tx * stride, Math.max(0, cw - ts));
+      const y0 = Math.min(ty * stride, Math.max(0, ch - ts));
+      const tw = Math.min(ts, cw - x0);
+      const th = Math.min(ts, ch - y0);
+
+      // Extract tile (pad to ts x ts if at edge)
+      const tileImg = new OffscreenCanvas(ts, ts);
+      tileImg.getContext('2d').drawImage(cropImg, x0, y0, tw, th, 0, 0, tw, th);
+      const tileMask = new OffscreenCanvas(ts, ts);
+      tileMask.getContext('2d').drawImage(cropMask, x0, y0, tw, th, 0, 0, tw, th);
+
+      // Skip tiles with no mask pixels — use original pixels directly
+      const mCheck = tileMask.getContext('2d').getImageData(0, 0, ts, ts).data;
+      let hasMask = false;
+      for (let i = 0; i < ts * ts; i++) {
+        if (mCheck[i * 4 + 3] > 128) { hasMask = true; break; }
+      }
+
+      setProgress(done / totalTiles, `Tile ${done + 1}/${totalTiles}...`);
+
+      let tileResult;
+      if (hasMask) {
+        tileResult = await runONNXTile(tileImg, tileMask, ts);
+      } else {
+        tileResult = tileImg.getContext('2d').getImageData(0, 0, ts, ts).data;
+      }
+
+      // Accumulate into crop buffer with blending weights
+      for (let py = 0; py < th; py++) {
+        for (let px = 0; px < tw; px++) {
+          const ci = (y0 + py) * cw + (x0 + px);
+          const ti = py * ts + px;
+          const wt = tileW[ti];
+          accumR[ci] += tileResult[ti * 4] * wt;
+          accumG[ci] += tileResult[ti * 4 + 1] * wt;
+          accumB[ci] += tileResult[ti * 4 + 2] * wt;
+          accumWt[ci] += wt;
+        }
+      }
+      done++;
+    }
+  }
+
+  // Normalize and write to canvas
+  const result = new OffscreenCanvas(cw, ch);
+  const rCtx = result.getContext('2d');
+  const rData = rCtx.createImageData(cw, ch);
+  for (let i = 0; i < cw * ch; i++) {
+    const denom = accumWt[i] || 1;
+    rData.data[i * 4] = Math.round(accumR[i] / denom);
+    rData.data[i * 4 + 1] = Math.round(accumG[i] / denom);
+    rData.data[i * 4 + 2] = Math.round(accumB[i] / denom);
+    rData.data[i * 4 + 3] = 255;
+  }
+  rCtx.putImageData(rData, 0, 0);
+  return result;
+}
+
+// Run model on a single ts x ts tile
+async function runONNXTile(tileCanvas, tileMaskCanvas, ts) {
+  const iData = tileCanvas.getContext('2d').getImageData(0, 0, ts, ts);
+  const imgFloat = new Float32Array(3 * ts * ts);
+  for (let i = 0; i < ts * ts; i++) {
+    imgFloat[i] = iData.data[i * 4] / 255.0;
+    imgFloat[ts * ts + i] = iData.data[i * 4 + 1] / 255.0;
+    imgFloat[2 * ts * ts + i] = iData.data[i * 4 + 2] / 255.0;
+  }
+
+  const mData = tileMaskCanvas.getContext('2d').getImageData(0, 0, ts, ts);
+  const maskFloat = new Float32Array(ts * ts);
+  for (let i = 0; i < ts * ts; i++) {
     maskFloat[i] = mData.data[i * 4 + 3] > 128 ? 1.0 : 0.0;
   }
 
-  const imgTensor = new ort.Tensor('float32', imgFloat, [1, 3, ih, iw]);
-  const maskTensor = new ort.Tensor('float32', maskFloat, [1, 1, ih, iw]);
+  const imgTensor = new ort.Tensor('float32', imgFloat, [1, 3, ts, ts]);
+  const maskTensor = new ort.Tensor('float32', maskFloat, [1, 1, ts, ts]);
 
-  // Auto-detect input names
-  const inputs = S.model.inputNames;
   const feeds = {};
-  if (inputs.length >= 2) {
-    feeds[inputs[0]] = imgTensor;
-    feeds[inputs[1]] = maskTensor;
-  } else {
-    throw new Error('Model must have at least 2 inputs (image, mask). Found: ' + inputs.join(', '));
-  }
+  feeds[S.model.inputNames[0]] = imgTensor;
+  feeds[S.model.inputNames[1]] = maskTensor;
 
-  setProgress(0.3, 'Running AI model...');
   const results = await S.model.run(feeds);
   const output = results[S.model.outputNames[0]];
-  setProgress(0.8, 'Processing result...');
 
-  // Convert output back to canvas
-  const outCanvas = new OffscreenCanvas(iw, ih);
-  const outCtx = outCanvas.getContext('2d');
-  const outImg = outCtx.createImageData(iw, ih);
-
-  for (let i = 0; i < iw * ih; i++) {
-    outImg.data[i * 4] = Math.max(0, Math.min(255, Math.round(output.data[i])));
-    outImg.data[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(output.data[iw * ih + i])));
-    outImg.data[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(output.data[2 * iw * ih + i])));
-    outImg.data[i * 4 + 3] = 255;
+  // LaMa ONNX outputs [0, 255]
+  const out = new Uint8ClampedArray(ts * ts * 4);
+  for (let i = 0; i < ts * ts; i++) {
+    out[i * 4] = Math.max(0, Math.min(255, Math.round(output.data[i])));
+    out[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(output.data[ts * ts + i])));
+    out[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(output.data[2 * ts * ts + i])));
+    out[i * 4 + 3] = 255;
   }
-  outCtx.putImageData(outImg, 0, 0);
+  return out;
+}
 
-  // Scale back to original working size
-  const resultCanvas = new OffscreenCanvas(w, h);
-  const rCtx = resultCanvas.getContext('2d');
-  rCtx.drawImage(outCanvas, 0, 0, w, h);
+// Linear taper from 0 at edges to 1 in center, used to blend tile overlaps
+function buildTileWeights(size, overlap) {
+  const w = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const wx = Math.min(1, Math.min(x + 1, size - x) / overlap);
+      const wy = Math.min(1, Math.min(y + 1, size - y) / overlap);
+      w[y * size + x] = wx * wy;
+    }
+  }
+  return w;
+}
 
-  return resultCanvas;
+function getMaskBBox(maskRGBA, w, h) {
+  let x1 = w, y1 = h, x2 = 0, y2 = 0;
+  let found = false;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRGBA[(y * w + x) * 4 + 3] > 30) {
+        if (x < x1) x1 = x;
+        if (x > x2) x2 = x;
+        if (y < y1) y1 = y;
+        if (y > y2) y2 = y;
+        found = true;
+      }
+    }
+  }
+  return found ? { x1, y1, x2: x2 + 1, y2: y2 + 1 } : null;
 }
 
 // ---- Worker-based inpainting ----

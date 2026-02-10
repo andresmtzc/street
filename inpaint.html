@@ -11,7 +11,11 @@
     <header>
       <h1>Street View Inpainter</h1>
       <div class="header-right">
-        <button id="loadModelBtn" class="btn btn-secondary" title="Optional: load an ONNX inpainting model for higher quality">
+        <a href="https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
+           class="btn btn-tool" target="_blank" title="Download lama_fp32.onnx (~208 MB) from HuggingFace">
+          Download Model
+        </a>
+        <button id="loadModelBtn" class="btn btn-secondary" title="Load lama_fp32.onnx for AI inpainting">
           Load AI Model (.onnx)
         </button>
         <span id="modelStatus" class="status-badge">Built-in mode</span>
