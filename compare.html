@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Compare</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a1a;
+    color: #fff;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Picker Screen */
+#picker-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    gap: 16px;
+}
+#picker-screen h1 { font-size: 2rem; font-weight: 300; }
+#picker-screen p { color: #888; font-size: 0.95rem; }
+.pick-btn {
+    padding: 12px 32px;
+    font-size: 1.1rem;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.pick-btn:hover { background: #444; }
+
+/* Viewer Screen */
+#viewer-screen { display: none; height: 100vh; flex-direction: column; }
+#viewer-screen.active { display: flex; }
+
+/* Top Bar */
+#top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 20px;
+    background: #222;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+}
+#counter { font-size: 1.1rem; font-weight: 500; }
+#stats { font-size: 0.85rem; color: #888; }
+#export-btn {
+    padding: 8px 20px;
+    background: #2d5a27;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+#export-btn:hover { background: #3a7a30; }
+#export-btn:disabled { opacity: 0.5; cursor: default; }
+#save-btn, #import-btn {
+    padding: 8px 20px;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+#save-btn:hover, #import-btn:hover { background: #444; }
+
+/* Image Container */
+#image-container {
+    flex: 1;
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    min-height: 0;
+}
+.image-panel {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #111;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    border: 3px solid transparent;
+    transition: border-color 0.15s;
+}
+.image-panel img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+.image-panel .label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(0,0,0,0.7);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    z-index: 2;
+    pointer-events: none;
+}
+.image-panel .overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.12);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 1;
+}
+.image-panel.selected .overlay { opacity: 1; }
+.image-panel.selected { border-color: #4a9eff; }
+
+.fix-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 10px 22px;
+    background: rgba(180, 80, 20, 0.85);
+    color: #fff;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    display: none;
+    z-index: 3;
+    white-space: nowrap;
+}
+.fix-btn:hover { background: rgba(200, 90, 20, 0.95); }
+.image-panel.selected .fix-btn { display: block; }
+.fix-btn.active {
+    background: rgba(220, 50, 30, 0.9);
+    border-color: rgba(255,100,80,0.6);
+}
+
+.empty-label {
+    color: #444;
+    font-size: 0.9rem;
+    pointer-events: none;
+}
+
+/* Bottom Bar */
+#bottom-bar {
+    padding: 6px 20px;
+    background: #222;
+    border-top: 1px solid #333;
+    text-align: center;
+    flex-shrink: 0;
+}
+#filename { color: #aaa; font-size: 0.9rem; }
+#nav-hints { font-size: 0.7rem; color: #555; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div id="picker-screen">
+    <h1>Image Compare</h1>
+    <p>Select a folder containing original and _repaired images</p>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+        <input type="checkbox" id="review-fixes-toggle" style="width:18px;height:18px;accent-color:#e8a030">
+        <span style="font-size:1rem;color:#ccc">Review Fixes (compare <code style="background:#333;padding:2px 6px;border-radius:3px">f_</code> vs originals)</span>
+    </label>
+    <button class="pick-btn" onclick="document.getElementById('folder-input').click()">Select Folder</button>
+    <input type="file" id="folder-input" webkitdirectory multiple hidden>
+</div>
+
+<div id="viewer-screen">
+    <div id="top-bar">
+        <span id="counter">1 / 1</span>
+        <span id="stats"></span>
+        <div style="display:flex;gap:8px">
+            <button id="save-btn" onclick="saveJson()">Save JSON</button>
+            <button id="import-btn" onclick="document.getElementById('json-input').click()">Import JSON</button>
+            <input type="file" id="json-input" accept=".json" hidden>
+            <button id="export-btn" onclick="exportZip()">Export ZIP</button>
+        </div>
+    </div>
+
+    <div id="image-container">
+        <div class="image-panel" id="left-panel" onclick="selectSide('original')">
+            <div class="label">Original</div>
+            <div class="overlay"></div>
+            <img id="left-img">
+            <button class="fix-btn" id="left-fix-btn" onclick="event.stopPropagation(); toggleFix()">Needs Fixing</button>
+            <span class="empty-label" id="left-empty" style="display:none">No original</span>
+        </div>
+
+        <div class="image-panel" id="right-panel" onclick="selectSide('repaired')">
+            <div class="label">Repaired</div>
+            <div class="overlay"></div>
+            <img id="right-img">
+            <button class="fix-btn" id="right-fix-btn" onclick="event.stopPropagation(); toggleFix()">Needs Fixing</button>
+            <span class="empty-label" id="right-empty" style="display:none">No repaired</span>
+        </div>
+    </div>
+
+    <div id="bottom-bar">
+        <div id="filename"></div>
+        <div id="nav-hints">← Previous &nbsp;|&nbsp; Space / → Next</div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// --- State ---
+let pairs = [];
+let currentIndex = 0;
+let folderName = 'export';
+let leftUrl = null;
+let rightUrl = null;
+let reviewMode = false;
+
+// --- Init ---
+document.getElementById('folder-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+
+    // Extract folder name from relative path
+    const rel = files[0].webkitRelativePath || '';
+    if (rel) folderName = rel.split('/')[0];
+
+    reviewMode = document.getElementById('review-fixes-toggle').checked;
+    initPairs(files);
+});
+
+function initPairs(files) {
+    // Filter to jpg/jpeg only
+    const jpgs = files.filter(f => /\.jpe?g$/i.test(f.name));
+
+    if (!jpgs.length) {
+        alert('No JPEG images found in this folder.');
+        return;
+    }
+
+    if (reviewMode) {
+        initReviewPairs(jpgs);
+    } else {
+        initComparePairs(jpgs);
+    }
+
+    currentIndex = 0;
+
+    document.getElementById('picker-screen').style.display = 'none';
+    document.getElementById('viewer-screen').classList.add('active');
+
+    // Update labels for review mode
+    document.querySelector('#right-panel .label').textContent = reviewMode ? 'Your Fix' : 'Repaired';
+    document.querySelector('#right-panel .empty-label').textContent = reviewMode ? 'No fix found' : 'No repaired';
+
+    render();
+}
+
+function initComparePairs(jpgs) {
+    const map = new Map();
+
+    for (const file of jpgs) {
+        const name = file.name;
+        const isRepaired = /_repaired\.jpe?g$/i.test(name);
+        const baseName = isRepaired
+            ? name.replace(/_repaired(\.jpe?g)$/i, '')
+            : name.replace(/\.jpe?g$/i, '');
+
+        if (!map.has(baseName)) {
+            map.set(baseName, {
+                baseName,
+                original: null,
+                repaired: null,
+                selected: null,
+                needsFixing: false
+            });
+        }
+
+        const pair = map.get(baseName);
+        if (isRepaired) {
+            pair.repaired = file;
+        } else {
+            pair.original = file;
+        }
+    }
+
+    // Natural sort
+    pairs = Array.from(map.values()).sort((a, b) =>
+        a.baseName.localeCompare(b.baseName, undefined, { numeric: true, sensitivity: 'base' })
+    );
+}
+
+function initReviewPairs(jpgs) {
+    // Build a lookup of all files by name
+    const byName = new Map();
+    for (const file of jpgs) {
+        byName.set(file.name.toLowerCase(), file);
+    }
+
+    // Find f_ files and pair with originals
+    const result = [];
+    for (const file of jpgs) {
+        const name = file.name;
+        if (!/^f_/i.test(name)) continue;
+
+        // Strip f_ prefix to find the original
+        const originalName = name.replace(/^f_/i, '');
+        const original = byName.get(originalName.toLowerCase()) || null;
+        const baseName = originalName.replace(/\.jpe?g$/i, '');
+
+        result.push({
+            baseName,
+            original,
+            repaired: file,   // the f_ fix goes in the "repaired" slot (right panel)
+            selected: null,
+            needsFixing: false
+        });
+    }
+
+    if (!result.length) {
+        alert('No f_ prefixed files found in this folder.');
+        return;
+    }
+
+    // Natural sort
+    pairs = result.sort((a, b) =>
+        a.baseName.localeCompare(b.baseName, undefined, { numeric: true, sensitivity: 'base' })
+    );
+}
+
+// --- Render ---
+function render() {
+    const pair = pairs[currentIndex];
+    if (!pair) return;
+
+    // Revoke old blob URLs
+    if (leftUrl) { URL.revokeObjectURL(leftUrl); leftUrl = null; }
+    if (rightUrl) { URL.revokeObjectURL(rightUrl); rightUrl = null; }
+
+    const leftImg = document.getElementById('left-img');
+    const rightImg = document.getElementById('right-img');
+    const leftEmpty = document.getElementById('left-empty');
+    const rightEmpty = document.getElementById('right-empty');
+    const leftPanel = document.getElementById('left-panel');
+    const rightPanel = document.getElementById('right-panel');
+
+    // Left (original)
+    if (pair.original) {
+        leftUrl = URL.createObjectURL(pair.original);
+        leftImg.src = leftUrl;
+        leftImg.style.display = '';
+        leftEmpty.style.display = 'none';
+        leftPanel.style.cursor = 'pointer';
+    } else {
+        leftImg.style.display = 'none';
+        leftImg.removeAttribute('src');
+        leftEmpty.style.display = '';
+        leftPanel.style.cursor = 'default';
+    }
+
+    // Right (repaired)
+    if (pair.repaired) {
+        rightUrl = URL.createObjectURL(pair.repaired);
+        rightImg.src = rightUrl;
+        rightImg.style.display = '';
+        rightEmpty.style.display = 'none';
+        rightPanel.style.cursor = 'pointer';
+    } else {
+        rightImg.style.display = 'none';
+        rightImg.removeAttribute('src');
+        rightEmpty.style.display = '';
+        rightPanel.style.cursor = 'default';
+    }
+
+    // Selection
+    leftPanel.classList.toggle('selected', pair.selected === 'original');
+    rightPanel.classList.toggle('selected', pair.selected === 'repaired');
+
+    // Fix buttons
+    const leftFixBtn = document.getElementById('left-fix-btn');
+    const rightFixBtn = document.getElementById('right-fix-btn');
+
+    leftFixBtn.classList.toggle('active', pair.selected === 'original' && pair.needsFixing);
+    rightFixBtn.classList.toggle('active', pair.selected === 'repaired' && pair.needsFixing);
+
+    leftFixBtn.textContent = (pair.selected === 'original' && pair.needsFixing) ? 'Marked for Fixing' : 'Needs Fixing';
+    rightFixBtn.textContent = (pair.selected === 'repaired' && pair.needsFixing) ? 'Marked for Fixing' : 'Needs Fixing';
+
+    // Counter
+    document.getElementById('counter').textContent = `${currentIndex + 1} / ${pairs.length}`;
+
+    // Filename
+    document.getElementById('filename').textContent = pair.baseName;
+
+    updateStats();
+}
+
+function updateStats() {
+    const selected = pairs.filter(p => p.selected).length;
+    const fixing = pairs.filter(p => p.needsFixing).length;
+    document.getElementById('stats').textContent = `Selected: ${selected} | Fixing: ${fixing}`;
+}
+
+// --- Actions ---
+function selectSide(side) {
+    const pair = pairs[currentIndex];
+    if (!pair) return;
+
+    if (side === 'original' && !pair.original) return;
+    if (side === 'repaired' && !pair.repaired) return;
+
+    if (pair.selected === side) {
+        // Deselect
+        pair.selected = null;
+        pair.needsFixing = false;
+    } else {
+        pair.selected = side;
+        // Auto-mark needs fixing when choosing original (repair was bad)
+        pair.needsFixing = (side === 'original');
+    }
+
+    render();
+}
+
+function toggleFix() {
+    const pair = pairs[currentIndex];
+    if (!pair || !pair.selected) return;
+    pair.needsFixing = !pair.needsFixing;
+    render();
+}
+
+function navigate(dir) {
+    const next = currentIndex + dir;
+    if (next >= 0 && next < pairs.length) {
+        currentIndex = next;
+        render();
+    }
+}
+
+// --- Keyboard ---
+document.addEventListener('keydown', (e) => {
+    // Don't capture if user is in an input/textarea
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        navigate(1);
+    } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigate(-1);
+    }
+});
+
+// --- Save / Import JSON ---
+function saveJson() {
+    const data = {
+        currentIndex,
+        selections: {}
+    };
+
+    for (const pair of pairs) {
+        if (pair.selected) {
+            data.selections[pair.baseName] = {
+                selected: pair.selected,
+                needsFixing: pair.needsFixing
+            };
+        }
+    }
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'compare.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+document.getElementById('json-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const data = JSON.parse(reader.result);
+            importJson(data);
+        } catch (err) {
+            alert('Invalid JSON file: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
+    // Reset so the same file can be re-imported
+    e.target.value = '';
+});
+
+function importJson(data) {
+    if (!pairs.length) {
+        alert('Load a folder first, then import JSON.');
+        return;
+    }
+
+    const sel = data.selections || {};
+    let applied = 0;
+
+    for (const pair of pairs) {
+        const saved = sel[pair.baseName];
+        if (saved) {
+            pair.selected = saved.selected;
+            pair.needsFixing = !!saved.needsFixing;
+            applied++;
+        }
+    }
+
+    if (typeof data.currentIndex === 'number' && data.currentIndex >= 0 && data.currentIndex < pairs.length) {
+        currentIndex = data.currentIndex;
+    }
+
+    render();
+    alert(`Imported ${applied} selection(s) from JSON.`);
+}
+
+// --- Export ---
+async function exportZip() {
+    const selectedPairs = pairs.filter(p => p.selected);
+
+    if (!selectedPairs.length) {
+        alert('No images selected yet. Click on images to select them first.');
+        return;
+    }
+
+    const btn = document.getElementById('export-btn');
+    btn.textContent = 'Exporting...';
+    btn.disabled = true;
+
+    try {
+        const zip = new JSZip();
+
+        for (const pair of selectedPairs) {
+            const file = pair.selected === 'original' ? pair.original : pair.repaired;
+            const prefix = pair.needsFixing ? 'f_' : '';
+            const exportName = prefix + pair.baseName + '.jpg';
+
+            const data = await file.arrayBuffer();
+            zip.file(exportName, data);
+        }
+
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = folderName + '_export.zip';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Export failed: ' + err.message);
+    }
+
+    btn.textContent = 'Export ZIP';
+    btn.disabled = false;
+}
+</script>
+</body>
+</html>
