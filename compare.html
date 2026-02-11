@@ -63,6 +63,16 @@ body {
 }
 #export-btn:hover { background: #3a7a30; }
 #export-btn:disabled { opacity: 0.5; cursor: default; }
+#save-btn, #import-btn {
+    padding: 8px 20px;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+#save-btn:hover, #import-btn:hover { background: #444; }
 
 /* Image Container */
 #image-container {
@@ -167,7 +177,12 @@ body {
     <div id="top-bar">
         <span id="counter">1 / 1</span>
         <span id="stats"></span>
-        <button id="export-btn" onclick="exportZip()">Export ZIP</button>
+        <div style="display:flex;gap:8px">
+            <button id="save-btn" onclick="saveJson()">Save JSON</button>
+            <button id="import-btn" onclick="document.getElementById('json-input').click()">Import JSON</button>
+            <input type="file" id="json-input" accept=".json" hidden>
+            <button id="export-btn" onclick="exportZip()">Export ZIP</button>
+        </div>
     </div>
 
     <div id="image-container">
@@ -352,7 +367,8 @@ function selectSide(side) {
         pair.needsFixing = false;
     } else {
         pair.selected = side;
-        pair.needsFixing = false;
+        // Auto-mark needs fixing when choosing original (repair was bad)
+        pair.needsFixing = (side === 'original');
     }
 
     render();
@@ -387,6 +403,77 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// --- Save / Import JSON ---
+function saveJson() {
+    const data = {
+        currentIndex,
+        selections: {}
+    };
+
+    for (const pair of pairs) {
+        if (pair.selected) {
+            data.selections[pair.baseName] = {
+                selected: pair.selected,
+                needsFixing: pair.needsFixing
+            };
+        }
+    }
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'compare.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+document.getElementById('json-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const data = JSON.parse(reader.result);
+            importJson(data);
+        } catch (err) {
+            alert('Invalid JSON file: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
+    // Reset so the same file can be re-imported
+    e.target.value = '';
+});
+
+function importJson(data) {
+    if (!pairs.length) {
+        alert('Load a folder first, then import JSON.');
+        return;
+    }
+
+    const sel = data.selections || {};
+    let applied = 0;
+
+    for (const pair of pairs) {
+        const saved = sel[pair.baseName];
+        if (saved) {
+            pair.selected = saved.selected;
+            pair.needsFixing = !!saved.needsFixing;
+            applied++;
+        }
+    }
+
+    if (typeof data.currentIndex === 'number' && data.currentIndex >= 0 && data.currentIndex < pairs.length) {
+        currentIndex = data.currentIndex;
+    }
+
+    render();
+    alert(`Imported ${applied} selection(s) from JSON.`);
+}
+
 // --- Export ---
 async function exportZip() {
     const selectedPairs = pairs.filter(p => p.selected);
@@ -405,8 +492,8 @@ async function exportZip() {
 
         for (const pair of selectedPairs) {
             const file = pair.selected === 'original' ? pair.original : pair.repaired;
-            const suffix = pair.needsFixing ? '_fixing.jpg' : '.jpg';
-            const exportName = pair.baseName + suffix;
+            const prefix = pair.needsFixing ? 'fixing_' : '';
+            const exportName = prefix + pair.baseName + '.jpg';
 
             const data = await file.arrayBuffer();
             zip.file(exportName, data);
