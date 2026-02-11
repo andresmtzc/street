@@ -6,8 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
-  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Instrument+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -18,8 +17,13 @@
 
     #viewer-section { height: 50%; background: #111; position: relative; display: flex; flex-direction: column; border-bottom: 2px solid #333; }
     #viewer-header { padding: 8px 15px; background: #222; color: white; display: flex; justify-content: space-between; align-items: center; font-size: 13px; z-index: 10; }
-    #viewer-body { flex-grow: 1; position: relative; background: #000; }
-    #panorama { width: 100%; height: 100%; }
+    #viewer-body { flex-grow: 1; position: relative; background: #0b1020; }
+
+    #canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      touch-action: none; pointer-events: auto;
+      -webkit-user-select: none; user-select: none;
+    }
 
     #map-section { height: 50%; position: relative; display: flex; }
     #left-panel {
@@ -30,7 +34,7 @@
     #map { flex: 1; height: 100%; }
 
     .panel-section { border-bottom: 1px solid #2a2a2a; padding: 16px; }
-    
+
     .section-title {
       font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
       color: #666; text-transform: uppercase; margin-bottom: 12px;
@@ -58,15 +62,15 @@
     .btn-danger { background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); }
 
     /* MARKERS */
-    .custom-marker { 
-      width: 16px; height: 16px; border-radius: 50%; 
-      border: 1.5px solid white; cursor: pointer; transition: 0.2s; 
+    .custom-marker {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 1.5px solid white; cursor: pointer; transition: 0.2s;
       display: flex; justify-content: center; align-items: center;
       font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700;
       color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
       z-index: 5;
     }
-    
+
     /* Blue Dots (Original) */
     .blue-dot { background-color: #2b6df6; }
     .blue-dot.active {
@@ -88,7 +92,7 @@
       box-shadow: 0 0 12px #00ffff;
     }
     .red-dot:hover { z-index: 15; transform: scale(1.2); }
-    
+
     /* Delete Cursor */
     .delete-cursor { cursor: not-allowed !important; }
     .delete-cursor:hover { transform: scale(0.9); opacity: 0.8; }
@@ -101,13 +105,98 @@
       z-index: 30;
     }
 
-    #ui-overlay { 
+    #ui-overlay {
       position: absolute; top: 10px; right: 10px;
       background: rgba(0,0,0,0.85); padding: 12px; border-radius: 8px;
       display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
       color: white; z-index: 20; border: 1px solid rgba(255,255,255,0.1);
     }
 
+    /* ===== THREE.JS VIEWER STYLES ===== */
+    .image-controls {
+      position: absolute; bottom: 10px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center;
+      z-index: 20; pointer-events: none;
+    }
+
+    .navigation-ring {
+      position: relative; width: 160px; height: 160px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      user-select: none;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+    }
+
+    .nav-button.ring-button {
+      position: absolute; width: 40px; height: 40px;
+      border: none; border-radius: 50%;
+      background: rgba(0,0,0,0);
+      color: #fcfaf3;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; cursor: pointer;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      z-index: 21;
+    }
+
+    #nextImageBtn.ring-button { top: 15px; left: 50%; }
+    #prevImageBtn.ring-button { bottom: 15px; left: 50%; }
+
+    .nav-button.ring-button:hover {
+      transform: translateX(-50%) scale(1.2);
+    }
+
+    .time {
+      position: absolute; right: 20px; bottom: 20px;
+      color: #22d3ee; font-weight: 600; font-size: 14px;
+      z-index: 25;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .zoom-controls {
+      position: absolute; right: 10px; top: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 5;
+    }
+
+    .zoom-btn {
+      width: 36px; height: 36px;
+      background: rgba(0,0,0,0.7); border: 1px solid #555;
+      color: white; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; cursor: pointer;
+    }
+    .zoom-btn:hover { background: rgba(0,0,0,0.9); }
+
+    #viewer-loading {
+      display: none; position: absolute;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 100; background: rgba(0,0,0,0.7);
+      padding: 20px; border-radius: 10px;
+      text-align: center; color: white;
+    }
+
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid rgba(255,255,255,0.1);
+      border-radius: 50%; border-top: 4px solid #22d3ee;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    #empty-msg {
+      height: 100%; display: flex; justify-content: center;
+      align-items: center; color: #555;
+      position: absolute; top: 0; left: 0; width: 100%;
+      z-index: 5; pointer-events: none;
+    }
 
   </style>
 </head>
@@ -119,8 +208,31 @@
       <div><b id="viewer-title">Street View</b> <span id="viewer-meta" style="margin-left:10px; opacity:0.7;"></span></div>
     </div>
     <div id="viewer-body">
-      <div id="panorama"></div>
-      <div id="empty-msg" style="height:100%; display:flex; justify-content:center; align-items:center; color:#555;">Load data to begin</div>
+      <canvas id="canvas"></canvas>
+      <div id="empty-msg">Load data to begin</div>
+
+      <!-- Loading spinner -->
+      <div id="viewer-loading">
+        <div class="spinner"></div>
+        <div id="loading-text">Loading 360 image...</div>
+      </div>
+
+      <!-- Navigation ring -->
+      <div class="image-controls">
+        <div class="navigation-ring">
+          <button class="nav-button ring-button" id="nextImageBtn">&#9651;</button>
+          <button class="nav-button ring-button" id="prevImageBtn">&#9661;</button>
+        </div>
+      </div>
+
+      <!-- Image counter -->
+      <div class="time" id="time">-/-</div>
+
+      <!-- Zoom controls -->
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoomInBtn">+</button>
+        <button class="zoom-btn" id="zoomOutBtn">&minus;</button>
+      </div>
     </div>
   </div>
 
@@ -210,7 +322,7 @@
     </div>
 
     <div id="map"></div>
-    
+
     <div id="ui-overlay">
       <div style="display:flex; flex-direction:column; gap:4px; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 6px;">
         <label style="font-size:10px; font-weight:bold; color:#26a269;">CREATE BLUE POINTS</label>
@@ -257,9 +369,14 @@ let controlPointMarkers = [];
 let controlPoints = [];
 
 // Viewer State
-let imagesByIndex = {}; 
+let imagesByIndex = {};
 let currentIdx = -1;
-let panoViewer = null;
+
+// Three.js Viewer State
+let scene, camera, renderer, sphere, panoGroup;
+let currentYaw = 0, currentPitch = 0, currentFov = 75;
+let viewerInitialized = false;
+let preloadedImages = {};
 
 // Logic State
 let redTrackLine = null;
@@ -267,8 +384,6 @@ let addCPModeActive = false;
 let removeCPModeActive = false;
 let dragModeActive = false;
 let removePointModeActive = false;
-
-// Data is loaded via file inputs - no preloading
 
 /* ========================
    CATMULL-ROM SPLINE
@@ -343,14 +458,12 @@ function generatePointsFromGpx(trackLine, numPoints) {
   const points = [];
 
   for (let i = 0; i < numPoints; i++) {
-    // Calculate distance for this point (evenly spaced)
-    // i=0 -> distance=0 (start), i=numPoints-1 -> distance=totalLength (end)
     const distance = (i / (numPoints - 1)) * totalLength;
     const pointOnLine = turf.along(trackLine, distance);
     const coord = pointOnLine.geometry.coordinates;
 
     points.push({
-      index: i + 1, // Starting at 1 as requested
+      index: i + 1,
       lat: coord[1],
       lon: coord[0]
     });
@@ -361,7 +474,7 @@ function generatePointsFromGpx(trackLine, numPoints) {
 
 function processRawPoints(points) {
   rawPoints = points.sort((a,b) => a.index - b.index);
-  
+
   // Clear existing blue markers
   blueMarkers.forEach(m => m.remove());
   blueMarkers = [];
@@ -369,13 +482,13 @@ function processRawPoints(points) {
   // 1. Draw Blue Track
   if (map.getSource('blue-track')) map.removeSource('blue-track');
   if (map.getLayer('blue-track')) map.removeLayer('blue-track');
-  
-  map.addSource('blue-track', { 
-    type:'geojson', 
-    data: { type:'Feature', geometry: { type:'LineString', coordinates: rawPoints.map(p=>[p.lon,p.lat]) } } 
+
+  map.addSource('blue-track', {
+    type:'geojson',
+    data: { type:'Feature', geometry: { type:'LineString', coordinates: rawPoints.map(p=>[p.lon,p.lat]) } }
   });
-  map.addLayer({ 
-    id:'blue-track', type:'line', source:'blue-track', 
+  map.addLayer({
+    id:'blue-track', type:'line', source:'blue-track',
     paint: { 'line-color':'#2b6df6', 'line-width':3, 'line-opacity': 0.6 }
   });
 
@@ -383,7 +496,7 @@ function processRawPoints(points) {
   rawPoints.forEach((p, arrayIndex) => {
     const el = document.createElement('div');
     el.className = 'custom-marker blue-dot';
-    el.innerText = p.index; // Show Original ID
+    el.innerText = p.index;
     el.onclick = () => openViewer(p.index);
 
     const marker = new mapboxgl.Marker({ element: el })
@@ -404,27 +517,22 @@ function processRawPoints(points) {
    RED TRACK GENERATION
 ======================== */
 function generateRedTrack() {
-  // Determine control points (roughly 1 every 5 points)
   const cpCount = Math.max(4, Math.round(rawPoints.length / 5));
   const step = Math.floor(rawPoints.length / (cpCount - 1));
-  
-  // Clear old CPs
+
   controlPointMarkers.forEach(m => m.remove());
   controlPointMarkers = [];
   controlPoints = [];
 
-  // Pick points
   for (let i = 0; i < rawPoints.length; i += step) {
     controlPoints.push([rawPoints[i].lon, rawPoints[i].lat]);
     if (controlPoints.length >= cpCount - 1) break;
   }
-  // Ensure last point matches
   const lastP = rawPoints[rawPoints.length - 1];
   controlPoints.push([lastP.lon, lastP.lat]);
 
-  // Create CP Markers
   controlPoints.forEach(cp => createCPMarker(cp));
-  
+
   updateRedTrackLine();
   document.getElementById('showRedTrack').checked = true;
   document.getElementById('projectPointsBtn').disabled = false;
@@ -434,12 +542,11 @@ function generateRedTrack() {
 function createCPMarker(lngLat) {
   const el = document.createElement('div');
   el.className = 'control-point-marker';
-  
+
   const marker = new mapboxgl.Marker({ element: el, draggable: true })
     .setLngLat(lngLat)
     .addTo(map);
 
-  // Remove Logic
   el.onclick = (e) => {
     if (removeCPModeActive && controlPointMarkers.length > 3) {
       e.stopPropagation();
@@ -452,7 +559,6 @@ function createCPMarker(lngLat) {
   marker.on('drag', updateRedTrackLine);
   marker.on('dragend', () => {
     updateRedTrackLine();
-    // Auto-reproject if enabled
     if (document.getElementById('autoReproject').checked && rawPoints.length > 0 && redMarkers.length > 0) {
       projectPointsToRed();
     }
@@ -462,22 +568,19 @@ function createCPMarker(lngLat) {
 }
 
 function updateRedTrackLine() {
-  // 1. Get current CP coords
   controlPoints = controlPointMarkers.map(m => { const ll = m.getLngLat(); return [ll.lng, ll.lat]; });
-  
-  // 2. Generate smooth curve
+
   const smoothCurve = generateCatmullRomCurve(controlPoints, 30);
   redTrackLine = turf.lineString(smoothCurve);
 
-  // 3. Render
   if (map.getLayer('red-track')) map.removeLayer('red-track');
   if (map.getSource('red-track')) map.removeSource('red-track');
-  
+
   map.addSource('red-track', {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
   });
-  
+
   map.addLayer({
     id: 'red-track', type: 'line', source: 'red-track',
     paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
@@ -486,12 +589,11 @@ function updateRedTrackLine() {
 }
 
 /* ========================
-   PROJECT TO RED DOTS - WITH IMAGE ASSOCIATION
+   PROJECT TO RED DOTS
 ======================== */
 function projectPointsToRed() {
   if (!redTrackLine) return;
 
-  // Clear existing red markers
   redMarkers.forEach(item => item.marker.remove());
   redMarkers = [];
 
@@ -506,15 +608,12 @@ function projectPointsToRed() {
       const prev = rawPoints[idx-1];
       cumulativeDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
     }
-    
-    // Find proportional spot on red line
+
     const ratio = blueLen > 0 ? cumulativeDist / blueLen : 0;
     const pointOnRed = turf.along(redTrackLine, ratio * redLen);
     const coord = pointOnRed.geometry.coordinates;
 
-    // Create New Red Marker
-    // idx is 0-based, blue dots start at index 2
-    const imageIndex = p.index; // Store original image index from blue dot
+    const imageIndex = p.index;
     createRedMarker(coord, idx, imageIndex);
   });
 
@@ -528,44 +627,38 @@ function projectPointsToRed() {
 function createRedMarker(coord, sequentialIndex, imageIndex) {
   const el = document.createElement('div');
   el.className = 'custom-marker red-dot';
-  el.innerText = imageIndex; // Show original image index (2, 3, 4...)
-  el.title = `Sequence ${sequentialIndex}`; // Tooltip shows sequential position
+  el.innerText = imageIndex;
+  el.title = `Sequence ${sequentialIndex}`;
 
   const marker = new mapboxgl.Marker({ element: el, draggable: false })
     .setLngLat(coord)
     .addTo(map);
 
-  // Store marker + data
   const markerObj = {
     marker: marker,
     data: {
       lon: coord[0],
       lat: coord[1],
-      sequentialIndex: sequentialIndex, // Current position in sequence (0, 1, 2...)
-      imageIndex: imageIndex, // Original image ID from blue dot (2, 3, 4...)
-      associatedImage: imagesByIndex[imageIndex] // Direct image URL reference
+      sequentialIndex: sequentialIndex,
+      imageIndex: imageIndex,
+      associatedImage: imagesByIndex[imageIndex]
     }
   };
-  
-  // Click Logic: Delete or Open Viewer
+
   el.onclick = (e) => {
-    // If Remove Point Mode is active
     if (removePointModeActive) {
       deleteRedPoint(markerObj);
       return;
     }
-    
-    // If not in any editing mode, open the associated image
     if (!dragModeActive && !removePointModeActive) {
       openViewer(imageIndex);
     }
   };
-  
-  // Drag Setup
+
   marker.on('dragstart', () => {
     if (!dragModeActive) marker.setDraggable(false);
   });
-  
+
   marker.on('drag', () => {
     const ll = marker.getLngLat();
     const point = turf.point([ll.lng, ll.lat]);
@@ -580,30 +673,21 @@ function createRedMarker(coord, sequentialIndex, imageIndex) {
 }
 
 /* ========================
-   DELETE & RE-INDEX RED DOTS WITH IMAGE REMOVAL
+   DELETE & RE-INDEX RED DOTS
 ======================== */
 function deleteRedPoint(targetObj) {
-  // 1. Get the image index being deleted
   const deletedImageIndex = targetObj.data.imageIndex;
-  
-  // 2. Remove from Map
   targetObj.marker.remove();
-
-  // 3. Remove from Array
   const indexToRemove = redMarkers.indexOf(targetObj);
   if (indexToRemove > -1) {
     redMarkers.splice(indexToRemove, 1);
   }
 
-  // 4. Re-index remaining dots sequentially (0, 1, 2...)
-  // Visual number (imageIndex) stays the same, only internal sequentialIndex updates
   redMarkers.forEach((item, newSeqIndex) => {
     item.data.sequentialIndex = newSeqIndex;
   });
 
-  // 5. Update status and show feedback
   updateStatus();
-  console.log(`Deleted red dot #${targetObj.data.sequentialIndex}, image ${deletedImageIndex} removed from sequence`);
 }
 
 /* ========================
@@ -612,7 +696,7 @@ function deleteRedPoint(targetObj) {
 function updateDotsVisibility() {
   const showBlue = document.getElementById('showBlueDots').checked;
   const showRed = document.getElementById('showRedDots').checked;
-  
+
   blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
   redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
 }
@@ -625,13 +709,12 @@ function updateControlsVisibility() {
 function updateStatus() {
   document.getElementById('blueCount').innerText = blueMarkers.length;
   document.getElementById('projectedCount').innerText = redMarkers.length;
-  
-  // Show image range if we have red markers
+
   if (redMarkers.length > 0) {
     const firstImage = redMarkers[0].data.imageIndex;
     const lastImage = redMarkers[redMarkers.length - 1].data.imageIndex;
-    document.getElementById('viewer-meta').textContent = 
-      `Images: ${firstImage} → ${lastImage} (${redMarkers.length} points)`;
+    document.getElementById('viewer-meta').textContent =
+      `Images: ${firstImage} -> ${lastImage} (${redMarkers.length} points)`;
   }
 }
 
@@ -662,7 +745,7 @@ document.getElementById('removeCPMode').onchange = (e) => {
 document.getElementById('dragMode').onchange = (e) => {
   dragModeActive = e.target.checked;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
-  
+
   redMarkers.forEach(m => {
     m.marker.setDraggable(dragModeActive);
     m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
@@ -689,60 +772,591 @@ document.getElementById('removePointMode').onchange = (e) => {
    MAP EVENTS
 ======================== */
 map.on('click', (e) => {
-  // Add CP Logic
   if (addCPModeActive && redTrackLine) {
     const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
     const snapped = turf.nearestPointOnLine(redTrackLine, point);
-    
-    // Find index to insert based on distance
-    const snapDist = snapped.properties.location;
-    let insertIndex = controlPoints.length; 
-    
-    // Simple heuristic: distance along line logic is complex to implement perfectly 
-    // without rebuilding line data structure, so we just append close to where clicked
-    // for this demo or re-sort.
-    // Better: Re-sort control points by proximity to start? 
-    // Simple for now: Just add and re-generate.
-    
     createCPMarker(snapped.geometry.coordinates);
-    
-    // Sort CPs by proximity along track? 
-    // Actually, simple sorting by index isn't enough if loop.
-    // We will just push for now. 
     updateRedTrackLine();
   }
 });
 
 /* ========================
-   VIEWER & HELPERS
+   BEARING & GEOMETRY HELPERS
 ======================== */
-function openViewer(id) {
-  // Find point in rawPoints
-  const p = rawPoints.find(rp => rp.index === id);
-  if(!p) return;
-  
-  document.getElementById('empty-msg').style.display = 'none';
-  if(panoViewer) panoViewer.destroy();
-  
-  if(imagesByIndex[id]) {
-    panoViewer = pannellum.viewer('panorama', {
-      type: 'equirectangular', panorama: imagesByIndex[id],
-      autoLoad: true, showControls: true, compass: true,
+function bearingDeg(a, b) {
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
+  const lon1 = toRad(a[0]), lon2 = toRad(b[0]);
+  const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function degToRad(d) { return d * Math.PI / 180; }
+function radToDeg(r) { return r * 180 / Math.PI; }
+
+function destFromBearingDistance(lat, lon, brngDeg, distMeters) {
+  const R = 6378137;
+  const brng = degToRad(brngDeg);
+  const lat1 = degToRad(lat), lon1 = degToRad(lon);
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distMeters / R) +
+    Math.cos(lat1) * Math.sin(distMeters / R) * Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(distMeters / R) * Math.cos(lat1),
+    Math.cos(distMeters / R) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return [radToDeg(lon2), radToDeg(lat2)];
+}
+
+/* ========================
+   NAVIGATION HELPERS
+======================== */
+function getActivePoints() {
+  if (redMarkers.length > 0) {
+    return redMarkers.map(m => ({
+      index: m.data.imageIndex,
+      lon: m.data.lon,
+      lat: m.data.lat
+    }));
+  }
+  return rawPoints;
+}
+
+function getCurrentPointPosition() {
+  const pts = getActivePoints();
+  const pt = pts.find(p => p.index === currentIdx);
+  return pt ? [pt.lon, pt.lat] : null;
+}
+
+function getNextPointPosition() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos >= 0 && curPos < pts.length - 1) {
+    const next = pts[curPos + 1];
+    return [next.lon, next.lat];
+  }
+  return null;
+}
+
+function getPrevPointPosition() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos > 0) {
+    const prev = pts[curPos - 1];
+    return [prev.lon, prev.lat];
+  }
+  return null;
+}
+
+function navigateForward() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos >= 0 && curPos < pts.length - 1) {
+    openViewer(pts[curPos + 1].index);
+  }
+}
+
+function navigateBackward() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos > 0) {
+    openViewer(pts[curPos - 1].index);
+  }
+}
+
+/* ========================
+   THREE.JS VIEWER
+======================== */
+function initThreeJSViewer() {
+  if (viewerInitialized) return;
+
+  scene = new THREE.Scene();
+  panoGroup = new THREE.Group();
+  scene.add(panoGroup);
+
+  const canvas = document.getElementById('canvas');
+  camera = new THREE.PerspectiveCamera(currentFov, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+  camera.position.set(0, 0, 0.1);
+
+  renderer = new THREE.WebGLRenderer({
+    canvas: canvas,
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance'
+  });
+
+  const dpr = Math.min(window.devicePixelRatio || 2, 3);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+
+  setupViewerEventListeners();
+  animateViewer();
+  viewerInitialized = true;
+}
+
+function animateViewer() {
+  requestAnimationFrame(animateViewer);
+  updateNavigationRing();
+  if (renderer && scene && camera) {
+    renderer.render(scene, camera);
+  }
+}
+
+function resizeViewer() {
+  if (!renderer || !camera) return;
+  const canvas = document.getElementById('canvas');
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w === 0 || h === 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+
+window.addEventListener('resize', resizeViewer);
+
+/* ========================
+   NAVIGATION RING
+======================== */
+function updateNavigationRing() {
+  const ring = document.querySelector('.navigation-ring');
+  const nextBtn = document.getElementById('nextImageBtn');
+  const prevBtn = document.getElementById('prevImageBtn');
+  if (!ring || !sphere) return;
+
+  // Rotate ring to match yaw
+  const yawDegrees = THREE.MathUtils.radToDeg(currentYaw);
+  ring.style.transform = `rotateZ(${-yawDegrees}deg)`;
+
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+
+  const canForward = curPos >= 0 && curPos < pts.length - 1;
+  const canBackward = curPos > 0;
+
+  if (nextBtn) {
+    nextBtn.style.opacity = canForward ? 1 : 0;
+    nextBtn.style.pointerEvents = canForward ? 'auto' : 'none';
+  }
+  if (prevBtn) {
+    prevBtn.style.opacity = canBackward ? 1 : 0;
+    prevBtn.style.pointerEvents = canBackward ? 'auto' : 'none';
+  }
+}
+
+/* ========================
+   SPHERE IMAGE DISPLAY
+======================== */
+function applyImageToSphere(img) {
+  // Remove old sphere
+  if (sphere) {
+    panoGroup.remove(sphere);
+    if (sphere.geometry) sphere.geometry.dispose();
+    if (sphere.material) {
+      if (sphere.material.map) sphere.material.map.dispose();
+      sphere.material.dispose();
+    }
+  }
+
+  const geometry = new THREE.SphereGeometry(100, 60, 40);
+  geometry.scale(-1, 1, 1);
+  geometry.rotateY(Math.PI);
+
+  const texture = new THREE.Texture(img);
+  texture.needsUpdate = true;
+
+  const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+  sphere = new THREE.Mesh(geometry, material);
+
+  // Keep current orientation
+  sphere.rotation.y = currentYaw;
+  sphere.rotation.x = currentPitch;
+
+  panoGroup.add(sphere);
+  updateNavigationRing();
+}
+
+function loadImageToViewer(imageUrl) {
+  if (!viewerInitialized) {
+    initThreeJSViewer();
+  }
+
+  // Check preload cache
+  if (preloadedImages[imageUrl]) {
+    applyImageToSphere(preloadedImages[imageUrl]);
+    hideViewerLoading();
+    preloadAdjacentImages();
+    return;
+  }
+
+  showViewerLoading('Loading 360 image...');
+
+  const img = new Image();
+  img.crossOrigin = 'Anonymous';
+
+  img.onload = function() {
+    preloadedImages[imageUrl] = img;
+    hideViewerLoading();
+    applyImageToSphere(img);
+    preloadAdjacentImages();
+  };
+
+  img.onerror = function() {
+    hideViewerLoading();
+    console.error('Failed to load image:', imageUrl);
+  };
+
+  if (imageUrl.startsWith('blob:')) {
+    img.src = imageUrl;
+  } else {
+    img.src = imageUrl + (imageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+  }
+}
+
+/* ========================
+   IMAGE PRELOADING
+======================== */
+function preloadAdjacentImages() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos < 0) return;
+
+  // Preload next and previous
+  [-1, 1, -2, 2].forEach(offset => {
+    const idx = curPos + offset;
+    if (idx >= 0 && idx < pts.length) {
+      const imgUrl = imagesByIndex[pts[idx].index];
+      if (imgUrl && !preloadedImages[imgUrl]) {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => { preloadedImages[imgUrl] = img; };
+        img.onerror = () => {};
+        img.src = imgUrl.startsWith('blob:') ? imgUrl : imgUrl + '?t=' + Date.now();
+      }
+    }
+  });
+}
+
+/* ========================
+   VIEWER LOADING STATES
+======================== */
+function showViewerLoading(msg) {
+  const el = document.getElementById('viewer-loading');
+  const txt = document.getElementById('loading-text');
+  if (el && txt) { txt.textContent = msg; el.style.display = 'block'; }
+}
+
+function hideViewerLoading() {
+  const el = document.getElementById('viewer-loading');
+  if (el) el.style.display = 'none';
+}
+
+/* ========================
+   VIEWER EVENT LISTENERS
+======================== */
+function setupViewerEventListeners() {
+  const canvas = document.getElementById('canvas');
+
+  let isDragging = false;
+  let lastX = 0, lastY = 0;
+
+  // Mouse controls
+  canvas.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    disableNavButtons();
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (isDragging && sphere) {
+      const deltaX = e.clientX - lastX;
+      const deltaY = e.clientY - lastY;
+
+      sphere.rotation.y -= deltaX * 0.01;
+      sphere.rotation.x -= deltaY * 0.01;
+      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+
+      currentYaw = sphere.rotation.y;
+      currentPitch = sphere.rotation.x;
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      updateNavigationRing();
+      updateViewCone();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isDragging = false;
+    setTimeout(enableNavButtons, 50);
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('mouseenter', () => { canvas.style.cursor = 'grab'; });
+  canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'default'; });
+
+  // Wheel zoom
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const zoomSpeed = e.deltaMode === 0 ? 2 : 60;
+    const delta = e.deltaY > 0 ? zoomSpeed : -zoomSpeed;
+    const oldFov = currentFov;
+    currentFov = Math.max(30, Math.min(120, currentFov + delta));
+    if (currentFov !== oldFov) {
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  }, { passive: false });
+
+  // Touch controls
+  setupTouchGestures(canvas);
+
+  // Navigation buttons
+  document.getElementById('nextImageBtn').addEventListener('click', navigateForward);
+  document.getElementById('prevImageBtn').addEventListener('click', navigateBackward);
+
+  // Zoom buttons
+  document.getElementById('zoomInBtn').addEventListener('click', () => {
+    if (currentFov > 30) {
+      currentFov -= 5;
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  });
+  document.getElementById('zoomOutBtn').addEventListener('click', () => {
+    if (currentFov < 120) {
+      currentFov += 5;
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  });
+}
+
+function setupTouchGestures(canvas) {
+  let touchStartDistance = 0;
+  let touchStartFov = currentFov;
+  let isTouching = false;
+  let lastTouchX = 0, lastTouchY = 0;
+
+  function getTouchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      isTouching = true;
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+      e.preventDefault();
+    } else if (e.touches.length === 2) {
+      touchStartDistance = getTouchDistance(e.touches);
+      touchStartFov = currentFov;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && isTouching && sphere) {
+      const deltaX = e.touches[0].clientX - lastTouchX;
+      const deltaY = e.touches[0].clientY - lastTouchY;
+
+      sphere.rotation.y -= deltaX * 0.01;
+      sphere.rotation.x -= deltaY * 0.01;
+      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+
+      currentYaw = sphere.rotation.y;
+      currentPitch = sphere.rotation.x;
+
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+
+      updateViewCone();
+      updateNavigationRing();
+      e.preventDefault();
+    } else if (e.touches.length === 2) {
+      const currentDistance = getTouchDistance(e.touches);
+      const scale = touchStartDistance / currentDistance;
+      const newFov = Math.max(30, Math.min(120, touchStartFov * scale));
+      if (newFov !== currentFov) {
+        currentFov = newFov;
+        camera.fov = currentFov;
+        camera.updateProjectionMatrix();
+        updateViewCone();
+      }
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+      isTouching = false;
+      touchStartDistance = 0;
+    } else if (e.touches.length === 1) {
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+    }
+  }, { passive: false });
+}
+
+function disableNavButtons() {
+  document.querySelectorAll('.nav-button.ring-button').forEach(b => { b.style.pointerEvents = 'none'; });
+}
+
+function enableNavButtons() {
+  document.querySelectorAll('.nav-button.ring-button').forEach(b => { b.style.pointerEvents = 'auto'; });
+}
+
+/* ========================
+   VIEW CONE ON MAP
+======================== */
+let lastPathBearing = 0;
+
+function initConeSystem() {
+  if (!map.getSource('view-cone')) {
+    map.addSource('view-cone', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] } }
+    });
+
+    map.addLayer({
+      id: 'view-cone-fill', type: 'fill', source: 'view-cone',
+      paint: { 'fill-color': '#ff8400', 'fill-opacity': 0.5 }
+    });
+
+    map.addLayer({
+      id: 'view-cone-outline', type: 'line', source: 'view-cone',
+      paint: { 'line-color': '#ff6b6b', 'line-width': 2, 'line-opacity': 0 }
     });
   }
-  
-  // Highlight Blue and Red Dots
+}
+
+function getHorizontalFovDeg() {
+  if (!camera) return 90;
+  const vRad = THREE.MathUtils.degToRad(currentFov);
+  const hRad = 2 * Math.atan(Math.tan(vRad / 2) * camera.aspect);
+  return THREE.MathUtils.radToDeg(hRad);
+}
+
+function makeViewConeRing(lat, lon, headingDeg, fovDeg, radiusMeters, steps) {
+  radiusMeters = radiusMeters || 15;
+  steps = steps || 24;
+  const half = Math.max(0, Math.min(89, fovDeg / 2));
+  const start = headingDeg - half;
+  const end = headingDeg + half;
+
+  const ring = [[lon, lat]];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const brg = start + (end - start) * t;
+    ring.push(destFromBearingDistance(lat, lon, brg, radiusMeters));
+  }
+  ring.push([lon, lat]);
+  return ring;
+}
+
+function updateViewCone() {
+  if (!map || !map.getSource('view-cone')) return;
+
+  const pos = getCurrentPointPosition();
+  if (!pos) return;
+
+  // Compute path bearing from current to next point
+  const nextPos = getNextPointPosition();
+  const prevPos = getPrevPointPosition();
+  let pathBearing = lastPathBearing;
+
+  if (nextPos) {
+    pathBearing = bearingDeg(pos, nextPos);
+  } else if (prevPos) {
+    pathBearing = bearingDeg(prevPos, pos);
+  }
+
+  // Smooth bearing changes
+  if (lastPathBearing !== undefined) {
+    let diff = pathBearing - lastPathBearing;
+    if (Math.abs(diff) > 180) {
+      pathBearing += diff > 0 ? -360 : 360;
+    }
+  }
+  lastPathBearing = pathBearing;
+
+  // Combine path bearing with user yaw
+  const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
+  const finalHeading = (pathBearing + userYawDeg + 360) % 360;
+
+  const fovH = getHorizontalFovDeg();
+  const ring = makeViewConeRing(pos[1], pos[0], finalHeading, fovH, 15, 24);
+
+  map.getSource('view-cone').setData({
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [ring] }
+  });
+}
+
+function hideViewCone() {
+  if (map && map.getSource('view-cone')) {
+    map.getSource('view-cone').setData({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] }
+    });
+  }
+}
+
+// Update cone when map moves/zooms
+map.on('zoom', () => { if (currentIdx >= 0) updateViewCone(); });
+map.on('move', () => { if (currentIdx >= 0) updateViewCone(); });
+
+/* ========================
+   VIEWER & NAVIGATION
+======================== */
+function openViewer(id) {
+  const p = rawPoints.find(rp => rp.index === id);
+  if (!p) return;
+
+  currentIdx = id;
+
+  document.getElementById('empty-msg').style.display = 'none';
+
+  // Load image via Three.js
+  if (imagesByIndex[id]) {
+    loadImageToViewer(imagesByIndex[id]);
+  } else {
+    // No image for this point - show empty sphere or message
+    if (!viewerInitialized) initThreeJSViewer();
+  }
+
+  // Update counter
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(pt => pt.index === id);
+  document.getElementById('time').textContent = curPos >= 0
+    ? `${curPos + 1}/${pts.length}`
+    : `-/-`;
+
+  // Highlight dots
   document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.red-dot').forEach(el => el.classList.remove('active'));
 
   const activeBlueMarker = blueMarkers.find(m => m.getElement().innerText == id);
-  if(activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
+  if (activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
 
   const activeRedMarker = redMarkers.find(m => m.data.imageIndex == id);
-  if(activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
+  if (activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
 
   map.easeTo({ center: [p.lon, p.lat] });
   document.getElementById('viewer-title').innerText = `Point ${id}`;
+
+  // Update view cone
+  updateViewCone();
 }
 
 function fitToTrack() {
@@ -765,7 +1379,7 @@ document.getElementById('exportBtn').onclick = () => {
       index: p.index,
       lat: p.lat,
       lon: p.lon,
-      imageUrl: imagesByIndex[p.index] // Preserve GitHub URLs, blob URLs won't work after session
+      imageUrl: imagesByIndex[p.index]
     })),
     controlPoints: controlPointMarkers.map(m => {
       const ll = m.getLngLat();
@@ -789,17 +1403,14 @@ document.getElementById('exportBtn').onclick = () => {
 document.getElementById('exportGpxBtn').onclick = () => {
   if (!redTrackLine || redMarkers.length === 0) return;
 
-  // Get the smooth curve coordinates from the red track
   const curveCoords = redTrackLine.geometry.coordinates;
 
-  // Build GPX XML
   let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
   gpx += '<gpx version="1.1" creator="Quickview Editor" xmlns="http://www.topografix.com/GPX/1/1">\n';
   gpx += '  <trk>\n';
   gpx += '    <name>smoothed_track</name>\n';
   gpx += '    <trkseg>\n';
 
-  // Add track points (the smooth curve)
   curveCoords.forEach(coord => {
     gpx += `      <trkpt lat="${coord[1]}" lon="${coord[0]}"></trkpt>\n`;
   });
@@ -807,10 +1418,9 @@ document.getElementById('exportGpxBtn').onclick = () => {
   gpx += '    </trkseg>\n';
   gpx += '  </trk>\n';
 
-  // Add waypoints (red markers with photo references)
   redMarkers.forEach((m, idx) => {
     const imageIndex = m.data.imageIndex;
-    const photoNum = idx + 1; // Sequential photo number for naming
+    const photoNum = idx + 1;
     gpx += `  <wpt lat="${m.data.lat}" lon="${m.data.lon}">\n`;
     gpx += `    <name>Photo_${photoNum} - Image ${imageIndex}</name>\n`;
     gpx += `    <desc>Marble position along route - Image ${imageIndex}</desc>\n`;
@@ -819,7 +1429,6 @@ document.getElementById('exportGpxBtn').onclick = () => {
 
   gpx += '</gpx>';
 
-  // Download
   const blob = new Blob([gpx], {type: 'application/gpx+xml'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -854,7 +1463,6 @@ document.getElementById('gpxInput').onchange = async (e) => {
 document.getElementById('generateFromGpxBtn').onclick = () => {
   if (!loadedGpxTrack) return;
 
-  // Check for existing data and warn
   if (rawPoints.length > 0 || blueMarkers.length > 0) {
     if (!confirm('This will clear existing data. Continue?')) {
       return;
@@ -898,12 +1506,9 @@ document.getElementById('exportCreatedJsonBtn').onclick = () => {
 document.getElementById('imagesInput').onchange = (ev) => {
   let loadedCount = 0;
   Array.from(ev.target.files).forEach(f => {
-    // Skip hidden files (macOS creates ._ and .DS_Store files)
     if (f.name.startsWith('.')) return;
-    // Only accept image files
     if (!/\.(jpg|jpeg|png)$/i.test(f.name)) return;
 
-    // Match the last number before the file extension
     const m = f.name.match(/(\d+)\.[^.]+$/);
     if (m) {
       imagesByIndex[parseInt(m[1])] = URL.createObjectURL(f);
@@ -912,6 +1517,11 @@ document.getElementById('imagesInput').onchange = (ev) => {
   });
   console.log(`Loaded ${loadedCount} images`);
   updateMarkerColors();
+
+  // If already viewing a point, reload its image
+  if (currentIdx >= 0 && imagesByIndex[currentIdx]) {
+    loadImageToViewer(imagesByIndex[currentIdx]);
+  }
 };
 
 function updateMarkerColors() {
@@ -921,7 +1531,6 @@ function updateMarkerColors() {
     el.style.backgroundColor = imagesByIndex[p.index] ? '#26a269' : '#2b6df6';
   });
 
-  // Update status with image count
   const imageCount = rawPoints.filter(p => imagesByIndex[p.index]).length;
   document.getElementById('blueCount').innerText = `${blueMarkers.length} (${imageCount} imgs)`;
 }
@@ -930,51 +1539,53 @@ function updateMarkerColors() {
    CLEAR ALL
 ======================== */
 function clearAll() {
-  // Clear data
   rawPoints = [];
   imagesByIndex = {};
   currentIdx = -1;
 
-  // Clear blue markers
   blueMarkers.forEach(m => m.remove());
   blueMarkers = [];
 
-  // Clear red markers
   redMarkers.forEach(item => item.marker.remove());
   redMarkers = [];
 
-  // Clear control points
   controlPointMarkers.forEach(m => m.remove());
   controlPointMarkers = [];
   controlPoints = [];
   redTrackLine = null;
 
-  // Clear map layers
   if (map.getLayer('blue-track')) map.removeLayer('blue-track');
   if (map.getSource('blue-track')) map.removeSource('blue-track');
   if (map.getLayer('red-track')) map.removeLayer('red-track');
   if (map.getSource('red-track')) map.removeSource('red-track');
 
-  // Clear viewer
-  if (panoViewer) {
-    panoViewer.destroy();
-    panoViewer = null;
+  // Clean up Three.js
+  if (sphere) {
+    panoGroup.remove(sphere);
+    if (sphere.geometry) sphere.geometry.dispose();
+    if (sphere.material) {
+      if (sphere.material.map) sphere.material.map.dispose();
+      sphere.material.dispose();
+    }
+    sphere = null;
   }
+  currentYaw = 0;
+  currentPitch = 0;
+  currentFov = 75;
+  preloadedImages = {};
+
   document.getElementById('empty-msg').style.display = 'flex';
   document.getElementById('empty-msg').textContent = 'Load data to begin';
   document.getElementById('viewer-title').textContent = 'Street View';
   document.getElementById('viewer-meta').textContent = '';
+  document.getElementById('time').textContent = '-/-';
 
-  // Reset buttons
   document.getElementById('projectPointsBtn').disabled = true;
   document.getElementById('exportBtn').disabled = true;
   document.getElementById('exportGpxBtn').disabled = true;
   document.getElementById('dragMode').disabled = true;
   document.getElementById('exportCreatedJsonBtn').disabled = true;
 
-  // Reset GPX state (keep loadedGpxTrack so user can regenerate with different point count)
-
-  // Reset modes
   addCPModeActive = false;
   removeCPModeActive = false;
   dragModeActive = false;
@@ -984,6 +1595,7 @@ function clearAll() {
   document.getElementById('dragMode').checked = false;
   document.getElementById('removePointMode').checked = false;
 
+  hideViewCone();
   updateStatus();
 }
 
@@ -998,12 +1610,9 @@ document.getElementById('importRedInput').onchange = async (e) => {
 
   const data = JSON.parse(await f.text());
 
-  // Clear existing data first
   clearAll();
 
-  // 1. Restore rawPoints (blue dots + blue line)
   if (data.rawPoints && data.rawPoints.length > 0) {
-    // Restore image URLs (GitHub URLs will work, blob URLs won't)
     data.rawPoints.forEach(p => {
       if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
         imagesByIndex[p.index] = p.imageUrl;
@@ -1013,7 +1622,6 @@ document.getElementById('importRedInput').onchange = async (e) => {
     processRawPoints(data.rawPoints);
   }
 
-  // 2. Recreate control points + red curve
   if (data.controlPoints && data.controlPoints.length > 0) {
     data.controlPoints.forEach(cp => {
       createCPMarker([cp.lon, cp.lat]);
@@ -1023,7 +1631,6 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('projectPointsBtn').disabled = false;
   }
 
-  // 3. Recreate red markers
   if (data.redMarkers && data.redMarkers.length > 0) {
     data.redMarkers.forEach(p => {
       createRedMarker(
@@ -1042,7 +1649,14 @@ document.getElementById('importRedInput').onchange = async (e) => {
   updateStatus();
 };
 
-// Ready - waiting for user to load data
+/* ========================
+   INIT CONE ON MAP LOAD
+======================== */
+map.on('load', () => {
+  initConeSystem();
+});
+
+// Ready
 </script>
 </body>
 </html>
