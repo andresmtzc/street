@@ -492,7 +492,7 @@ async function exportZip() {
 
         for (const pair of selectedPairs) {
             const file = pair.selected === 'original' ? pair.original : pair.repaired;
-            const prefix = pair.needsFixing ? 'fixing_' : '';
+            const prefix = pair.needsFixing ? 'f_' : '';
             const exportName = prefix + pair.baseName + '.jpg';
 
             const data = await file.arrayBuffer();
