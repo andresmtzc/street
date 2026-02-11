@@ -169,6 +169,10 @@ body {
 <div id="picker-screen">
     <h1>Image Compare</h1>
     <p>Select a folder containing original and _repaired images</p>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+        <input type="checkbox" id="review-fixes-toggle" style="width:18px;height:18px;accent-color:#e8a030">
+        <span style="font-size:1rem;color:#ccc">Review Fixes (compare <code style="background:#333;padding:2px 6px;border-radius:3px">f_</code> vs originals)</span>
+    </label>
     <button class="pick-btn" onclick="document.getElementById('folder-input').click()">Select Folder</button>
     <input type="file" id="folder-input" webkitdirectory multiple hidden>
 </div>
@@ -217,6 +221,7 @@ let currentIndex = 0;
 let folderName = 'export';
 let leftUrl = null;
 let rightUrl = null;
+let reviewMode = false;
 
 // --- Init ---
 document.getElementById('folder-input').addEventListener('change', (e) => {
@@ -227,6 +232,7 @@ document.getElementById('folder-input').addEventListener('change', (e) => {
     const rel = files[0].webkitRelativePath || '';
     if (rel) folderName = rel.split('/')[0];
 
+    reviewMode = document.getElementById('review-fixes-toggle').checked;
     initPairs(files);
 });
 
@@ -239,7 +245,25 @@ function initPairs(files) {
         return;
     }
 
-    // Group by base name
+    if (reviewMode) {
+        initReviewPairs(jpgs);
+    } else {
+        initComparePairs(jpgs);
+    }
+
+    currentIndex = 0;
+
+    document.getElementById('picker-screen').style.display = 'none';
+    document.getElementById('viewer-screen').classList.add('active');
+
+    // Update labels for review mode
+    document.querySelector('#right-panel .label').textContent = reviewMode ? 'Your Fix' : 'Repaired';
+    document.querySelector('#right-panel .empty-label').textContent = reviewMode ? 'No fix found' : 'No repaired';
+
+    render();
+}
+
+function initComparePairs(jpgs) {
     const map = new Map();
 
     for (const file of jpgs) {
@@ -271,13 +295,44 @@ function initPairs(files) {
     pairs = Array.from(map.values()).sort((a, b) =>
         a.baseName.localeCompare(b.baseName, undefined, { numeric: true, sensitivity: 'base' })
     );
+}
 
-    currentIndex = 0;
+function initReviewPairs(jpgs) {
+    // Build a lookup of all files by name
+    const byName = new Map();
+    for (const file of jpgs) {
+        byName.set(file.name.toLowerCase(), file);
+    }
 
-    document.getElementById('picker-screen').style.display = 'none';
-    document.getElementById('viewer-screen').classList.add('active');
+    // Find f_ files and pair with originals
+    const result = [];
+    for (const file of jpgs) {
+        const name = file.name;
+        if (!/^f_/i.test(name)) continue;
 
-    render();
+        // Strip f_ prefix to find the original
+        const originalName = name.replace(/^f_/i, '');
+        const original = byName.get(originalName.toLowerCase()) || null;
+        const baseName = originalName.replace(/\.jpe?g$/i, '');
+
+        result.push({
+            baseName,
+            original,
+            repaired: file,   // the f_ fix goes in the "repaired" slot (right panel)
+            selected: null,
+            needsFixing: false
+        });
+    }
+
+    if (!result.length) {
+        alert('No f_ prefixed files found in this folder.');
+        return;
+    }
+
+    // Natural sort
+    pairs = result.sort((a, b) =>
+        a.baseName.localeCompare(b.baseName, undefined, { numeric: true, sensitivity: 'base' })
+    );
 }
 
 // --- Render ---
@@ -492,7 +547,7 @@ async function exportZip() {
 
         for (const pair of selectedPairs) {
             const file = pair.selected === 'original' ? pair.original : pair.repaired;
-            const prefix = pair.needsFixing ? 'fixing_' : '';
+            const prefix = pair.needsFixing ? 'f_' : '';
             const exportName = prefix + pair.baseName + '.jpg';
 
             const data = await file.arrayBuffer();
