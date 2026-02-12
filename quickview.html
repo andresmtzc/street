@@ -357,6 +357,7 @@
 
       <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
       <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
+      <button class="btn" id="exportIndexBtn" style="background: linear-gradient(135deg, #9b59b6 0%, #6c3483 100%); margin-top:2px;">Export Index</button>
     </div>
 
     <div class="panel-section">
@@ -2467,6 +2468,38 @@ document.getElementById('exportGpxBtn').onclick = () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${track.name}_smoothed.gpx`;
+  a.click();
+};
+
+document.getElementById('exportIndexBtn').onclick = () => {
+  // Build files list: trackname-imageIndex.jpg for every red marker across all tracks
+  const files = [];
+  const gpxFiles = [];
+  const yawfixes = {};
+
+  tracks.forEach(track => {
+    gpxFiles.push(track.name + '.gpx');
+    yawfixes[track.name + '.gpx'] = track.yawFix || 0;
+    track.redMarkers.forEach(m => {
+      files.push(`${track.name}-${m.imageIndex}.jpg`);
+    });
+  });
+
+  // Build marriages in portable format: "trackname.gpx:imageIndex"
+  const marriages = marriageGroups.map(group =>
+    group.map(key => {
+      // key is "trackName:imageIndex"
+      const parts = key.split(':');
+      return parts[0] + '.gpx:' + parts[1];
+    })
+  );
+
+  const indexData = { files, gpxFiles, yawfixes, marriages };
+
+  const blob = new Blob([JSON.stringify(indexData, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'index.json';
   a.click();
 };
 
