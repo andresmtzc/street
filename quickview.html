@@ -297,6 +297,14 @@
           </div>
 
           <div class="checkbox-row">
+            <input type="checkbox" id="lockMode">
+            <label for="lockMode" style="color:#ffeb3b; font-weight:bold;">Lock Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
+            Click Red dot to toggle lock (yellow)
+          </div>
+
+          <div class="checkbox-row">
             <input type="checkbox" id="removePointMode">
             <label for="removePointMode" style="color:#ff4444; font-weight:bold;">Remove Point Mode</label>
           </div>
@@ -389,6 +397,11 @@ let addCPModeActive = false;
 let removeCPModeActive = false;
 let dragModeActive = false;
 let removePointModeActive = false;
+let lockModeActive = false;
+
+// Undo System
+const undoStack = [];
+const MAX_UNDO = 20;
 
 /* ========================
    CATMULL-ROM SPLINE
@@ -451,6 +464,183 @@ function findTrackByName(name) {
 }
 
 /* ========================
+   UNDO SYSTEM
+======================== */
+function saveUndoState(track) {
+  if (!track) track = getCurrentTrack();
+  if (!track) return;
+
+  const state = {
+    trackId: track.id,
+    controlPointPositions: track.controlPointMarkers.map(m => {
+      const ll = m.getLngLat();
+      return [ll.lng, ll.lat];
+    }),
+    redMarkers: track.redMarkers.map(m => ({
+      lon: m.lon,
+      lat: m.lat,
+      sequentialIndex: m.sequentialIndex,
+      imageIndex: m.imageIndex,
+      distanceAlongRoute: m.distanceAlongRoute || 0,
+      isLocked: m.isLocked || false
+    }))
+  };
+
+  undoStack.push(state);
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+
+  const state = undoStack.pop();
+  const track = tracks.get(state.trackId);
+  if (!track) return;
+
+  // Select the track if not current
+  if (currentTrackId !== state.trackId) selectTrack(state.trackId);
+
+  // Restore control point positions
+  if (state.controlPointPositions.length === track.controlPointMarkers.length) {
+    state.controlPointPositions.forEach((pos, i) => {
+      track.controlPointMarkers[i].setLngLat(pos);
+    });
+    updateRedTrackLine(track);
+  } else {
+    // CP count changed (add/remove) — rebuild them
+    track.controlPointMarkers.forEach(m => m.remove());
+    track.controlPointMarkers = [];
+    state.controlPointPositions.forEach(pos => {
+      createCPMarker(pos, track);
+    });
+    updateRedTrackLine(track);
+  }
+
+  // Restore red markers
+  track.redMarkers = state.redMarkers.map(m => ({
+    lon: m.lon,
+    lat: m.lat,
+    sequentialIndex: m.sequentialIndex,
+    imageIndex: m.imageIndex,
+    distanceAlongRoute: m.distanceAlongRoute,
+    isLocked: m.isLocked
+  }));
+
+  updateRedMarkersSource();
+  updateStatus();
+}
+
+/* ========================
+   CP MID-LINE INSERTION HELPERS
+======================== */
+function distanceToSegment(point, segStart, segEnd) {
+  // Returns perpendicular distance from point to line segment
+  const dx = segEnd[0] - segStart[0];
+  const dy = segEnd[1] - segStart[1];
+  const lenSq = dx * dx + dy * dy;
+
+  if (lenSq === 0) {
+    // Segment is a point
+    const ex = point[0] - segStart[0];
+    const ey = point[1] - segStart[1];
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+
+  let t = ((point[0] - segStart[0]) * dx + (point[1] - segStart[1]) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+
+  const projX = segStart[0] + t * dx;
+  const projY = segStart[1] + t * dy;
+  const ex = point[0] - projX;
+  const ey = point[1] - projY;
+  return Math.sqrt(ex * ex + ey * ey);
+}
+
+function findBestCPInsertIndex(coord, controlPointMarkers) {
+  // Find which segment between consecutive CPs the new point is closest to
+  if (controlPointMarkers.length < 2) return controlPointMarkers.length;
+
+  let bestDist = Infinity;
+  let bestIdx = controlPointMarkers.length; // default: append
+
+  for (let i = 0; i < controlPointMarkers.length - 1; i++) {
+    const a = controlPointMarkers[i].getLngLat();
+    const b = controlPointMarkers[i + 1].getLngLat();
+    const d = distanceToSegment(coord, [a.lng, a.lat], [b.lng, b.lat]);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i + 1; // insert after segment start
+    }
+  }
+
+  return bestIdx;
+}
+
+/* ========================
+   MARBLE REDISTRIBUTION
+======================== */
+function redistributeMarbles(track, dragIdx) {
+  if (!track || !track.redTrackLine) return;
+
+  const markers = track.redMarkers;
+  const totalLen = turf.length(track.redTrackLine);
+  if (totalLen === 0) return;
+
+  // Compute distanceAlongRoute for the dragged marker
+  const dragPt = turf.point([markers[dragIdx].lon, markers[dragIdx].lat]);
+  const snapped = turf.nearestPointOnLine(track.redTrackLine, dragPt);
+  markers[dragIdx].distanceAlongRoute = snapped.properties.location;
+
+  // Find previous locked boundary (or start)
+  let prevBound = 0;
+  for (let i = dragIdx - 1; i >= 0; i--) {
+    if (markers[i].isLocked) { prevBound = i; break; }
+  }
+
+  // Find next locked boundary (or end)
+  let nextBound = markers.length - 1;
+  for (let i = dragIdx + 1; i < markers.length; i++) {
+    if (markers[i].isLocked) { nextBound = i; break; }
+  }
+
+  // Redistribute unlocked marbles between prevBound and dragIdx
+  if (dragIdx - prevBound > 1) {
+    const startDist = markers[prevBound].distanceAlongRoute;
+    const endDist = markers[dragIdx].distanceAlongRoute;
+    const count = dragIdx - prevBound - 1;
+
+    for (let i = 1; i <= count; i++) {
+      const idx = prevBound + i;
+      if (markers[idx].isLocked) continue;
+      const ratio = i / (count + 1);
+      const dist = startDist + ratio * (endDist - startDist);
+      const pt = turf.along(track.redTrackLine, dist);
+      markers[idx].lon = pt.geometry.coordinates[0];
+      markers[idx].lat = pt.geometry.coordinates[1];
+      markers[idx].distanceAlongRoute = dist;
+    }
+  }
+
+  // Redistribute unlocked marbles between dragIdx and nextBound
+  if (nextBound - dragIdx > 1) {
+    const startDist = markers[dragIdx].distanceAlongRoute;
+    const endDist = markers[nextBound].distanceAlongRoute;
+    const count = nextBound - dragIdx - 1;
+
+    for (let i = 1; i <= count; i++) {
+      const idx = dragIdx + i;
+      if (markers[idx].isLocked) continue;
+      const ratio = i / (count + 1);
+      const dist = startDist + ratio * (endDist - startDist);
+      const pt = turf.along(track.redTrackLine, dist);
+      markers[idx].lon = pt.geometry.coordinates[0];
+      markers[idx].lat = pt.geometry.coordinates[1];
+      markers[idx].distanceAlongRoute = dist;
+    }
+  }
+}
+
+/* ========================
    CIRCLE LAYER SOURCES
 ======================== */
 function updateBlueMarkersSource() {
@@ -494,7 +684,8 @@ function updateRedMarkersSource() {
           trackId: ct.id,
           sequentialIndex: m.sequentialIndex,
           imageIndex: m.imageIndex,
-          isActive: (m.imageIndex === currentIdx)
+          isActive: (m.imageIndex === currentIdx),
+          isLocked: m.isLocked || false
         }
       });
     });
@@ -586,6 +777,7 @@ function initMarkerLayers() {
       ],
       'circle-color': ['case',
         ['==', ['get', 'isActive'], true], '#00ffff',
+        ['==', ['get', 'isLocked'], true], '#ffeb3b',
         '#ff4444'
       ],
       'circle-stroke-width': ['case',
@@ -645,6 +837,20 @@ function setupMarkerEvents() {
     e.originalEvent.stopPropagation();
     const f = e.features[0].properties;
 
+    if (lockModeActive) {
+      const track = getCurrentTrack();
+      if (track) {
+        const idx = f.sequentialIndex;
+        const m = track.redMarkers[idx];
+        if (!m) return;
+        // Endpoints are always locked — can't unlock
+        if (idx === 0 || idx === track.redMarkers.length - 1) return;
+        saveUndoState(track);
+        m.isLocked = !m.isLocked;
+        updateRedMarkersSource();
+      }
+      return;
+    }
     if (removePointModeActive) {
       deleteRedPoint(f.sequentialIndex);
       return;
@@ -664,6 +870,7 @@ function setupMarkerEvents() {
   });
   map.on('mouseenter', 'red-markers-click', () => {
     if (dragModeActive) map.getCanvas().style.cursor = 'move';
+    else if (lockModeActive) map.getCanvas().style.cursor = 'pointer';
     else if (removePointModeActive) map.getCanvas().style.cursor = 'not-allowed';
     else map.getCanvas().style.cursor = 'pointer';
   });
@@ -680,6 +887,29 @@ function setupMarkerEvents() {
     const track = getCurrentTrack();
     if (!track || !track.redTrackLine) return;
 
+    // Can't drag locked markers
+    if (track.redMarkers[seqIdx] && track.redMarkers[seqIdx].isLocked) return;
+
+    saveUndoState(track);
+
+    // Find boundary distances for constraining drag
+    const totalLen = turf.length(track.redTrackLine);
+    let prevBoundDist = 0;
+    let nextBoundDist = totalLen;
+
+    for (let i = seqIdx - 1; i >= 0; i--) {
+      if (track.redMarkers[i].isLocked) {
+        prevBoundDist = track.redMarkers[i].distanceAlongRoute || 0;
+        break;
+      }
+    }
+    for (let i = seqIdx + 1; i < track.redMarkers.length; i++) {
+      if (track.redMarkers[i].isLocked) {
+        nextBoundDist = track.redMarkers[i].distanceAlongRoute || totalLen;
+        break;
+      }
+    }
+
     map.getCanvas().style.cursor = 'grabbing';
     map.dragPan.disable();
 
@@ -687,8 +917,18 @@ function setupMarkerEvents() {
       if (!track.redTrackLine || !track.redMarkers[seqIdx]) return;
       const point = turf.point([ev.lngLat.lng, ev.lngLat.lat]);
       const snapped = turf.nearestPointOnLine(track.redTrackLine, point);
-      track.redMarkers[seqIdx].lon = snapped.geometry.coordinates[0];
-      track.redMarkers[seqIdx].lat = snapped.geometry.coordinates[1];
+      let dist = snapped.properties.location;
+
+      // Constrain between locked boundaries
+      dist = Math.max(prevBoundDist, Math.min(nextBoundDist, dist));
+
+      const constrained = turf.along(track.redTrackLine, dist);
+      track.redMarkers[seqIdx].lon = constrained.geometry.coordinates[0];
+      track.redMarkers[seqIdx].lat = constrained.geometry.coordinates[1];
+      track.redMarkers[seqIdx].distanceAlongRoute = dist;
+
+      // Redistribute unlocked neighbors
+      redistributeMarbles(track, seqIdx);
       updateRedMarkersSource();
     }
 
@@ -747,8 +987,10 @@ function selectTrack(trackId) {
   // Reset modes
   dragModeActive = false;
   removePointModeActive = false;
+  lockModeActive = false;
   document.getElementById('dragMode').checked = false;
   document.getElementById('removePointMode').checked = false;
+  document.getElementById('lockMode').checked = false;
 
   updateTracksList();
   updateStatus();
@@ -944,7 +1186,7 @@ function generateRedTrack() {
   updateStatus();
 }
 
-function createCPMarker(lngLat, track) {
+function createCPMarker(lngLat, track, insertIndex) {
   if (!track) track = getCurrentTrack();
   if (!track) return;
 
@@ -958,12 +1200,14 @@ function createCPMarker(lngLat, track) {
   el.onclick = (e) => {
     if (removeCPModeActive && track.controlPointMarkers.length > 3) {
       e.stopPropagation();
+      saveUndoState(track);
       marker.remove();
       track.controlPointMarkers = track.controlPointMarkers.filter(m => m !== marker);
       updateRedTrackLine(track);
     }
   };
 
+  marker.on('dragstart', () => saveUndoState(track));
   marker.on('drag', () => updateRedTrackLine(track));
   marker.on('dragend', () => {
     updateRedTrackLine(track);
@@ -971,7 +1215,12 @@ function createCPMarker(lngLat, track) {
       projectPointsToRed(track);
     }
   });
-  track.controlPointMarkers.push(marker);
+
+  if (insertIndex !== undefined && insertIndex < track.controlPointMarkers.length) {
+    track.controlPointMarkers.splice(insertIndex, 0, marker);
+  } else {
+    track.controlPointMarkers.push(marker);
+  }
   updateControlsVisibility();
 }
 
@@ -1010,6 +1259,8 @@ function projectPointsToRed(track) {
   if (!track) track = getCurrentTrack();
   if (!track || !track.redTrackLine) return;
 
+  saveUndoState(track);
+
   track.redMarkers = [];
 
   const blueTrack = turf.lineString(track.rawPoints.map(p => [p.lon, p.lat]));
@@ -1025,14 +1276,19 @@ function projectPointsToRed(track) {
     }
 
     const ratio = blueLen > 0 ? cumulativeDist / blueLen : 0;
-    const pointOnRed = turf.along(track.redTrackLine, ratio * redLen);
+    const distAlongRed = ratio * redLen;
+    const pointOnRed = turf.along(track.redTrackLine, distAlongRed);
     const coord = pointOnRed.geometry.coordinates;
+
+    const isEndpoint = (idx === 0 || idx === track.rawPoints.length - 1);
 
     track.redMarkers.push({
       lon: coord[0],
       lat: coord[1],
       sequentialIndex: idx,
-      imageIndex: p.index
+      imageIndex: p.index,
+      distanceAlongRoute: distAlongRed,
+      isLocked: isEndpoint
     });
   });
 
@@ -1053,12 +1309,21 @@ function deleteRedPoint(sequentialIndex) {
   const track = getCurrentTrack();
   if (!track) return;
 
+  // Don't delete locked markers
+  if (track.redMarkers[sequentialIndex] && track.redMarkers[sequentialIndex].isLocked) return;
+
+  saveUndoState(track);
+
   track.redMarkers.splice(sequentialIndex, 1);
 
-  // Re-index
+  // Re-index and ensure new endpoints are locked
   track.redMarkers.forEach((m, idx) => {
     m.sequentialIndex = idx;
   });
+  if (track.redMarkers.length > 0) {
+    track.redMarkers[0].isLocked = true;
+    track.redMarkers[track.redMarkers.length - 1].isLocked = true;
+  }
 
   updateRedMarkersSource();
   updateStatus();
@@ -1148,11 +1413,19 @@ document.getElementById('removeCPMode').onchange = (e) => {
 document.getElementById('dragMode').onchange = (e) => {
   dragModeActive = e.target.checked;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+  lockModeActive = false; document.getElementById('lockMode').checked = false;
+};
+
+document.getElementById('lockMode').onchange = (e) => {
+  lockModeActive = e.target.checked;
+  dragModeActive = false; document.getElementById('dragMode').checked = false;
+  removePointModeActive = false; document.getElementById('removePointMode').checked = false;
 };
 
 document.getElementById('removePointMode').onchange = (e) => {
   removePointModeActive = e.target.checked;
   dragModeActive = false; document.getElementById('dragMode').checked = false;
+  lockModeActive = false; document.getElementById('lockMode').checked = false;
 };
 
 /* ========================
@@ -1166,9 +1439,12 @@ map.on('click', (e) => {
 
     const ct = getCurrentTrack();
     if (ct && ct.redTrackLine) {
+      saveUndoState(ct);
       const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
       const snapped = turf.nearestPointOnLine(ct.redTrackLine, point);
-      createCPMarker(snapped.geometry.coordinates, ct);
+      const coord = snapped.geometry.coordinates;
+      const insertIdx = findBestCPInsertIndex(coord, ct.controlPointMarkers);
+      createCPMarker(coord, ct, insertIdx);
       updateRedTrackLine(ct);
     }
   }
@@ -1785,7 +2061,9 @@ document.getElementById('exportBtn').onclick = () => {
       sequentialIndex: m.sequentialIndex,
       originalImageIndex: m.imageIndex,
       lat: m.lat,
-      lon: m.lon
+      lon: m.lon,
+      distanceAlongRoute: m.distanceAlongRoute || 0,
+      isLocked: m.isLocked || false
     }))
   };
 
@@ -2053,10 +2331,14 @@ function clearAll() {
   removeCPModeActive = false;
   dragModeActive = false;
   removePointModeActive = false;
+  lockModeActive = false;
   document.getElementById('addCPMode').checked = false;
   document.getElementById('removeCPMode').checked = false;
   document.getElementById('dragMode').checked = false;
   document.getElementById('removePointMode').checked = false;
+  document.getElementById('lockMode').checked = false;
+
+  undoStack.length = 0;
 
   hideViewCone();
   updateTracksList();
@@ -2099,12 +2381,15 @@ document.getElementById('importRedInput').onchange = async (e) => {
   }
 
   if (data.redMarkers && data.redMarkers.length > 0) {
-    data.redMarkers.forEach(p => {
+    data.redMarkers.forEach((p, idx) => {
+      const isEndpoint = (idx === 0 || idx === data.redMarkers.length - 1);
       track.redMarkers.push({
         lon: p.lon,
         lat: p.lat,
         sequentialIndex: p.sequentialIndex,
-        imageIndex: p.originalImageIndex
+        imageIndex: p.originalImageIndex,
+        distanceAlongRoute: p.distanceAlongRoute || 0,
+        isLocked: p.isLocked !== undefined ? p.isLocked : isEndpoint
       });
     });
 
@@ -2127,6 +2412,16 @@ map.on('load', () => {
   initConeSystem();
   initMarkerLayers();
   setupMarkerEvents();
+});
+
+// Ctrl+Z / Cmd+Z undo
+document.addEventListener('keydown', (e) => {
+  // Don't intercept when typing in input fields
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    e.preventDefault();
+    undo();
+  }
 });
 
 // Ready
