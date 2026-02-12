@@ -230,6 +230,8 @@
     <div id="left-panel">
       <div class="panel-section">
         <button class="btn btn-danger" id="clearAllBtn">Clear All</button>
+        <button class="btn" id="undoBtn" disabled style="background: linear-gradient(135deg, #666 0%, #444 100%); margin-top: 4px;">Undo (Ctrl+Z)</button>
+        <div id="undoHint" style="font-size: 9px; color: #555; text-align: center; margin-top: 2px; font-family: 'JetBrains Mono', monospace;"></div>
       </div>
 
       <div class="panel-section">
@@ -466,12 +468,26 @@ function findTrackByName(name) {
 /* ========================
    UNDO SYSTEM
 ======================== */
-function saveUndoState(track) {
+function updateUndoUI() {
+  const btn = document.getElementById('undoBtn');
+  const hint = document.getElementById('undoHint');
+  if (undoStack.length === 0) {
+    btn.disabled = true;
+    hint.textContent = '';
+  } else {
+    btn.disabled = false;
+    const top = undoStack[undoStack.length - 1];
+    hint.textContent = top.action || 'undo last change';
+  }
+}
+
+function saveUndoState(track, action) {
   if (!track) track = getCurrentTrack();
   if (!track) return;
 
   const state = {
     trackId: track.id,
+    action: action || '',
     controlPointPositions: track.controlPointMarkers.map(m => {
       const ll = m.getLngLat();
       return [ll.lng, ll.lat];
@@ -488,6 +504,7 @@ function saveUndoState(track) {
 
   undoStack.push(state);
   if (undoStack.length > MAX_UNDO) undoStack.shift();
+  updateUndoUI();
 }
 
 function undo() {
@@ -495,7 +512,7 @@ function undo() {
 
   const state = undoStack.pop();
   const track = tracks.get(state.trackId);
-  if (!track) return;
+  if (!track) { updateUndoUI(); return; }
 
   // Select the track if not current
   if (currentTrackId !== state.trackId) selectTrack(state.trackId);
@@ -528,6 +545,7 @@ function undo() {
 
   updateRedMarkersSource();
   updateStatus();
+  updateUndoUI();
 }
 
 /* ========================
@@ -845,7 +863,7 @@ function setupMarkerEvents() {
         if (!m) return;
         // Endpoints are always locked — can't unlock
         if (idx === 0 || idx === track.redMarkers.length - 1) return;
-        saveUndoState(track);
+        saveUndoState(track, 'toggle lock');
         m.isLocked = !m.isLocked;
         updateRedMarkersSource();
       }
@@ -890,7 +908,7 @@ function setupMarkerEvents() {
     // Can't drag locked markers
     if (track.redMarkers[seqIdx] && track.redMarkers[seqIdx].isLocked) return;
 
-    saveUndoState(track);
+    saveUndoState(track, 'drag red dot');
 
     // Find boundary distances for constraining drag
     const totalLen = turf.length(track.redTrackLine);
@@ -1200,14 +1218,14 @@ function createCPMarker(lngLat, track, insertIndex) {
   el.onclick = (e) => {
     if (removeCPModeActive && track.controlPointMarkers.length > 3) {
       e.stopPropagation();
-      saveUndoState(track);
+      saveUndoState(track, 'remove CP');
       marker.remove();
       track.controlPointMarkers = track.controlPointMarkers.filter(m => m !== marker);
       updateRedTrackLine(track);
     }
   };
 
-  marker.on('dragstart', () => saveUndoState(track));
+  marker.on('dragstart', () => saveUndoState(track, 'drag CP'));
   marker.on('drag', () => updateRedTrackLine(track));
   marker.on('dragend', () => {
     updateRedTrackLine(track);
@@ -1259,7 +1277,7 @@ function projectPointsToRed(track) {
   if (!track) track = getCurrentTrack();
   if (!track || !track.redTrackLine) return;
 
-  saveUndoState(track);
+  saveUndoState(track, 'project to red');
 
   track.redMarkers = [];
 
@@ -1312,7 +1330,7 @@ function deleteRedPoint(sequentialIndex) {
   // Don't delete locked markers
   if (track.redMarkers[sequentialIndex] && track.redMarkers[sequentialIndex].isLocked) return;
 
-  saveUndoState(track);
+  saveUndoState(track, 'delete red dot');
 
   track.redMarkers.splice(sequentialIndex, 1);
 
@@ -1439,7 +1457,7 @@ map.on('click', (e) => {
 
     const ct = getCurrentTrack();
     if (ct && ct.redTrackLine) {
-      saveUndoState(ct);
+      saveUndoState(ct, 'add CP');
       const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
       const snapped = turf.nearestPointOnLine(ct.redTrackLine, point);
       const coord = snapped.geometry.coordinates;
@@ -2339,6 +2357,7 @@ function clearAll() {
   document.getElementById('lockMode').checked = false;
 
   undoStack.length = 0;
+  updateUndoUI();
 
   hideViewCone();
   updateTracksList();
@@ -2346,6 +2365,7 @@ function clearAll() {
 }
 
 document.getElementById('clearAllBtn').onclick = clearAll;
+document.getElementById('undoBtn').onclick = undo;
 
 /* ========================
    IMPORT RED PATH (creates new track)
