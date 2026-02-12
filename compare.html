@@ -181,8 +181,8 @@ body {
     <button class="pick-btn" onclick="document.getElementById('folder-input').click()">Select Folder</button>
     <input type="file" id="folder-input" webkitdirectory multiple hidden>
     <div style="margin-top:24px;border-top:1px solid #333;padding-top:20px;display:flex;align-items:center;gap:10px">
-        <span style="color:#888;font-size:0.95rem">Overlay first</span>
-        <input type="number" id="overlay-n" min="1" value="10" style="width:60px;padding:4px 8px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:1rem;text-align:center">
+        <span style="color:#888;font-size:0.95rem">Overlay every</span>
+        <input type="number" id="overlay-n" min="1" value="2" style="width:60px;padding:4px 8px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:1rem;text-align:center">
         <span style="color:#888;font-size:0.95rem">images</span>
         <button class="pick-btn" id="overlay-btn" style="padding:8px 20px;font-size:0.95rem" onclick="document.getElementById('overlay-folder-input').click()">Generate Overlay</button>
         <input type="file" id="overlay-folder-input" webkitdirectory multiple hidden>
@@ -564,16 +564,18 @@ document.getElementById('overlay-folder-input').addEventListener('change', async
     const rel = files[0].webkitRelativePath || '';
     if (rel) overlayFolderName = rel.split('/')[0];
 
-    const n = parseInt(document.getElementById('overlay-n').value) || 10;
-    const jpgs = files.filter(f => /\.jpe?g$/i.test(f.name) && !f.name.startsWith('._'))
+    const stride = parseInt(document.getElementById('overlay-n').value) || 2;
+    const allJpgs = files.filter(f => /\.jpe?g$/i.test(f.name) && !f.name.startsWith('._'))
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
-    if (!jpgs.length) {
+    if (!allJpgs.length) {
         alert('No JPEG images found.');
         return;
     }
 
-    const count = Math.min(n, jpgs.length);
+    // Pick every Nth image (stride)
+    const jpgs = allJpgs.filter((_, i) => i % stride === 0);
+
     const btn = document.getElementById('overlay-btn');
     btn.textContent = 'Generating...';
     btn.disabled = true;
@@ -591,10 +593,10 @@ document.getElementById('overlay-folder-input').addEventListener('change', async
         canvas.height = firstImg.naturalHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        const alpha = 1 / count;
+        const alpha = 1 / jpgs.length;
 
-        // Draw each image
-        for (let i = 0; i < count; i++) {
+        // Draw each sampled image
+        for (let i = 0; i < jpgs.length; i++) {
             const img = i === 0 ? firstImg : await loadImageFromFile(jpgs[i]);
             ctx.globalAlpha = alpha;
             ctx.drawImage(img, 0, 0);
@@ -603,7 +605,7 @@ document.getElementById('overlay-folder-input').addEventListener('change', async
         ctx.globalAlpha = 1;
 
         document.getElementById('overlay-info').textContent =
-            `${count} images overlaid (${(alpha * 100).toFixed(1)}% opacity each) — ${canvas.width}×${canvas.height}`;
+            `${jpgs.length} of ${allJpgs.length} images (every ${stride}), ${(alpha * 100).toFixed(1)}% opacity each — ${canvas.width}×${canvas.height}`;
 
         document.getElementById('picker-screen').style.display = 'none';
         document.getElementById('overlay-screen').classList.add('active');
