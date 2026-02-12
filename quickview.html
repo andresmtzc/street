@@ -108,8 +108,30 @@
     #nextImageBtn.ring-button { top: 15px; left: 50%; }
     #prevImageBtn.ring-button { bottom: 15px; left: 50%; }
 
+    /* Branch button positions based on geographic direction */
+    #branchBtn.ring-button,
+    .navigation-ring.branch-right #branchBtn.ring-button {
+      right: 15px; top: 50%; left: auto; bottom: auto;
+      transform: translateY(-50%);
+    }
+    .navigation-ring.branch-left #branchBtn.ring-button {
+      left: 15px; top: 50%; right: auto; bottom: auto;
+      transform: translateY(-50%) rotate(180deg);
+    }
+    .navigation-ring.branch-top #branchBtn.ring-button {
+      top: 15px; left: 50%; right: auto; bottom: auto;
+      transform: translateX(-50%) rotate(-90deg);
+    }
+    .navigation-ring.branch-bottom #branchBtn.ring-button {
+      bottom: 15px; left: 50%; right: auto; top: auto;
+      transform: translateX(-50%) rotate(90deg);
+    }
+
     .nav-button.ring-button:hover {
       transform: translateX(-50%) scale(1.2);
+    }
+    #branchBtn.ring-button:hover {
+      transform: translateY(-50%) scale(1.2);
     }
 
     .time {
@@ -212,6 +234,7 @@
         <div class="navigation-ring">
           <button class="nav-button ring-button" id="nextImageBtn">&#9651;</button>
           <button class="nav-button ring-button" id="prevImageBtn">&#9661;</button>
+          <button class="nav-button ring-button" id="branchBtn" style="opacity:0; pointer-events:none;">&#9655;</button>
         </div>
       </div>
 
@@ -311,6 +334,17 @@
           <div style="font-size: 10px; color: #666; padding-left: 28px;">
             Click Red dot to delete & re-index
           </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="marryMode">
+            <label for="marryMode" style="color:#FF00FF; font-weight:bold;">Marry Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px;" id="marryHelp">
+            Click red dots to select, uncheck to marry
+          </div>
+          <div id="marrySelectionInfo" style="font-size: 10px; color: #FF00FF; padding-left: 28px; display:none;">
+            Selected: <span id="marrySelectionCount">0</span> pts
+          </div>
         </div>
 
         <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
@@ -322,6 +356,7 @@
         <div style="font-size: 11px; color: #999;">
           <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
           <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
+          <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
         </div>
       </div>
     </div>
@@ -398,6 +433,24 @@ let removeCPModeActive = false;
 let dragModeActive = false;
 let removePointModeActive = false;
 let lockModeActive = false;
+let marryModeActive = false;
+let marrySelection = new Set(); // Set of "trackId:imageIndex" strings
+
+// Marriage State
+let marriageGroups = []; // Array of arrays: [["track-1:5", "track-2:12"], ...]
+const marriageColors = [
+  '#FF00FF', '#00FFFF', '#FFD700', '#FF6347', '#7B68EE',
+  '#00FA9A', '#FF69B4', '#32CD32', '#FF4500', '#1E90FF',
+  '#ADFF2F', '#DC143C'
+];
+
+// Marriage identifier: "trackName:imageIndex" — matches gpx.html format
+// e.g. "sierraalta0:142" — portable across sessions
+function markerKey(trackOrName, imageIndex) {
+  // Accept either a track object or a name string
+  const name = typeof trackOrName === 'string' ? trackOrName : trackOrName.name;
+  return `${name}:${imageIndex}`;
+}
 
 // Undo / Redo System
 const undoStack = [];
@@ -713,27 +766,42 @@ function updateBlueMarkersSource() {
   });
 }
 
+function getMarkerMarriageInfo(key) {
+  for (let i = 0; i < marriageGroups.length; i++) {
+    if (marriageGroups[i].includes(key)) {
+      return { isMarried: true, groupIndex: i, color: marriageColors[i % marriageColors.length] };
+    }
+  }
+  return { isMarried: false, groupIndex: -1, color: '#ff4444' };
+}
+
 function updateRedMarkersSource() {
   if (!map.getSource('red-markers')) return;
 
-  const ct = getCurrentTrack();
   const features = [];
 
-  if (ct) {
-    ct.redMarkers.forEach((m) => {
+  // Show red markers from ALL tracks (so married dots on other tracks are visible)
+  tracks.forEach((track) => {
+    track.redMarkers.forEach((m) => {
+      const key = markerKey(track.name, m.imageIndex);
+      const mInfo = getMarkerMarriageInfo(key);
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
         properties: {
-          trackId: ct.id,
+          markerKey: key,
+          trackId: track.id,
           sequentialIndex: m.sequentialIndex,
           imageIndex: m.imageIndex,
-          isActive: (m.imageIndex === currentIdx),
-          isLocked: m.isLocked || false
+          isActive: (track.id === currentTrackId && m.imageIndex === currentIdx),
+          isLocked: m.isLocked || false,
+          isMarrySelected: marrySelection.has(key),
+          isMarried: mInfo.isMarried,
+          marriageColor: mInfo.color
         }
       });
     });
-  }
+  });
 
   map.getSource('red-markers').setData({
     type: 'FeatureCollection',
@@ -817,19 +885,27 @@ function initMarkerLayers() {
     paint: {
       'circle-radius': ['case',
         ['==', ['get', 'isActive'], true], 9,
+        ['==', ['get', 'isMarrySelected'], true], 8,
+        ['==', ['get', 'isMarried'], true], 8,
         6
       ],
       'circle-color': ['case',
         ['==', ['get', 'isActive'], true], '#00ffff',
+        ['==', ['get', 'isMarrySelected'], true], '#00FFFF',
+        ['==', ['get', 'isMarried'], true], ['get', 'marriageColor'],
         ['==', ['get', 'isLocked'], true], '#ffeb3b',
         '#ff4444'
       ],
       'circle-stroke-width': ['case',
         ['==', ['get', 'isActive'], true], 2,
+        ['==', ['get', 'isMarrySelected'], true], 3,
+        ['==', ['get', 'isMarried'], true], 2,
         1.5
       ],
       'circle-stroke-color': ['case',
         ['==', ['get', 'isActive'], true], '#000000',
+        ['==', ['get', 'isMarrySelected'], true], '#FF00FF',
+        ['==', ['get', 'isMarried'], true], '#ffffff',
         '#ffffff'
       ]
     }
@@ -881,6 +957,18 @@ function setupMarkerEvents() {
     e.originalEvent.stopPropagation();
     const f = e.features[0].properties;
 
+    if (marryModeActive) {
+      const key = f.markerKey;
+      if (marrySelection.has(key)) {
+        marrySelection.delete(key);
+      } else {
+        marrySelection.add(key);
+      }
+      updateMarrySelectionUI();
+      updateRedMarkersSource();
+      return;
+    }
+
     if (lockModeActive) {
       const track = getCurrentTrack();
       if (track) {
@@ -913,7 +1001,8 @@ function setupMarkerEvents() {
     if (!addCPModeActive && !dragModeActive) map.getCanvas().style.cursor = '';
   });
   map.on('mouseenter', 'red-markers-click', () => {
-    if (dragModeActive) map.getCanvas().style.cursor = 'move';
+    if (marryModeActive) map.getCanvas().style.cursor = 'crosshair';
+    else if (dragModeActive) map.getCanvas().style.cursor = 'move';
     else if (lockModeActive) map.getCanvas().style.cursor = 'pointer';
     else if (removePointModeActive) map.getCanvas().style.cursor = 'not-allowed';
     else map.getCanvas().style.cursor = 'pointer';
@@ -1003,12 +1092,9 @@ function selectTrack(trackId) {
 
   const prevTrack = getCurrentTrack();
 
-  // Hide previous track's control points and red track line
+  // Hide previous track's control points (CPs are per-track editing, only show current)
   if (prevTrack) {
     prevTrack.controlPointMarkers.forEach(m => m.getElement().style.display = 'none');
-    if (map.getLayer(`red-track-${prevTrack.id}`)) {
-      map.setLayoutProperty(`red-track-${prevTrack.id}`, 'visibility', 'none');
-    }
   }
 
   currentTrackId = trackId;
@@ -1018,11 +1104,6 @@ function selectTrack(trackId) {
   // Show current track's control points
   const showCP = document.getElementById('showControlPoints').checked;
   track.controlPointMarkers.forEach(m => m.getElement().style.display = showCP ? 'block' : 'none');
-
-  if (map.getLayer(`red-track-${track.id}`)) {
-    const showRedTrack = document.getElementById('showRedTrack').checked;
-    map.setLayoutProperty(`red-track-${track.id}`, 'visibility', showRedTrack ? 'visible' : 'none');
-  }
 
   // Update marker sources (active state + red markers switch)
   updateBlueMarkersSource();
@@ -1065,6 +1146,11 @@ function removeTrack(trackId) {
 
   // Remove control point DOM markers
   track.controlPointMarkers.forEach(m => m.remove());
+
+  // Clean up marriages referencing this track's markers
+  track.redMarkers.forEach(m => {
+    divorceMarkerByKey(markerKey(track.name, m.imageIndex));
+  });
 
   // Revoke blob URLs
   Object.values(track.imagesByIndex).forEach(url => {
@@ -1365,6 +1451,12 @@ function deleteRedPoint(sequentialIndex) {
 
   saveUndoState(track, 'delete red dot');
 
+  // Clean up any marriages referencing this marker
+  const deletedMarker = track.redMarkers[sequentialIndex];
+  if (deletedMarker) {
+    divorceMarkerByKey(markerKey(track.name, deletedMarker.imageIndex));
+  }
+
   track.redMarkers.splice(sequentialIndex, 1);
 
   // Re-index and ensure new endpoints are locked
@@ -1409,6 +1501,7 @@ function updateControlsVisibility() {
 
 function updateStatus() {
   const ct = getCurrentTrack();
+  document.getElementById('marriageCount').innerText = marriageGroups.length;
   if (!ct) {
     document.getElementById('blueCount').innerText = '0';
     document.getElementById('projectedCount').innerText = '0';
@@ -1441,10 +1534,11 @@ document.getElementById('showBlueTrack').onchange = (e) => {
   });
 };
 document.getElementById('showRedTrack').onchange = (e) => {
-  const ct = getCurrentTrack();
-  if (ct && map.getLayer(`red-track-${ct.id}`)) {
-    map.setLayoutProperty(`red-track-${ct.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
-  }
+  tracks.forEach(track => {
+    if (map.getLayer(`red-track-${track.id}`)) {
+      map.setLayoutProperty(`red-track-${track.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
+    }
+  });
 };
 document.getElementById('showControlPoints').onchange = updateControlsVisibility;
 
@@ -1465,19 +1559,152 @@ document.getElementById('dragMode').onchange = (e) => {
   dragModeActive = e.target.checked;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
   lockModeActive = false; document.getElementById('lockMode').checked = false;
+  marryModeActive = false; document.getElementById('marryMode').checked = false;
+  marrySelection.clear(); updateMarrySelectionUI();
 };
 
 document.getElementById('lockMode').onchange = (e) => {
   lockModeActive = e.target.checked;
   dragModeActive = false; document.getElementById('dragMode').checked = false;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+  marryModeActive = false; document.getElementById('marryMode').checked = false;
+  marrySelection.clear(); updateMarrySelectionUI();
 };
 
 document.getElementById('removePointMode').onchange = (e) => {
   removePointModeActive = e.target.checked;
   dragModeActive = false; document.getElementById('dragMode').checked = false;
   lockModeActive = false; document.getElementById('lockMode').checked = false;
+  marryModeActive = false; document.getElementById('marryMode').checked = false;
+  marrySelection.clear(); updateMarrySelectionUI();
 };
+
+document.getElementById('marryMode').onchange = (e) => {
+  if (e.target.checked) {
+    // Turning ON marry mode
+    marryModeActive = true;
+    marrySelection.clear();
+    updateMarrySelectionUI();
+    // Disable conflicting modes
+    dragModeActive = false; document.getElementById('dragMode').checked = false;
+    removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+    lockModeActive = false; document.getElementById('lockMode').checked = false;
+  } else {
+    // Turning OFF marry mode — commit the marriage or divorce
+    marryModeActive = false;
+    if (marrySelection.size >= 2) {
+      // Check if any selected are already married — if so, divorce them
+      let alreadyMarried = false;
+      for (const key of marrySelection) {
+        const info = getMarkerMarriageInfo(key);
+        if (info.isMarried) { alreadyMarried = true; break; }
+      }
+      if (alreadyMarried) {
+        // Divorce: remove all selected from their groups
+        for (const key of marrySelection) {
+          divorceMarkerByKey(key);
+        }
+      } else {
+        // Marry: create new group
+        marriageGroups.push([...marrySelection]);
+      }
+    } else if (marrySelection.size === 1) {
+      // Single selection — divorce it if married
+      const key = [...marrySelection][0];
+      divorceMarkerByKey(key);
+    }
+    marrySelection.clear();
+    updateMarrySelectionUI();
+    updateRedMarkersSource();
+    updateStatus();
+  }
+};
+
+function updateMarrySelectionUI() {
+  const info = document.getElementById('marrySelectionInfo');
+  const count = document.getElementById('marrySelectionCount');
+  if (marryModeActive) {
+    info.style.display = 'block';
+    count.textContent = marrySelection.size;
+  } else {
+    info.style.display = 'none';
+  }
+}
+
+function divorceMarkerByKey(key) {
+  for (let i = 0; i < marriageGroups.length; i++) {
+    const idx = marriageGroups[i].indexOf(key);
+    if (idx !== -1) {
+      marriageGroups[i].splice(idx, 1);
+      if (marriageGroups[i].length < 2) {
+        marriageGroups.splice(i, 1);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/* ========================
+   MARRIAGE NAVIGATION HELPERS
+======================== */
+function findMarkerByKey(key) {
+  const [trackName, imgIdxStr] = key.split(':');
+  const imgIdx = parseInt(imgIdxStr);
+  for (const [trackId, track] of tracks) {
+    if (track.name === trackName) {
+      const marker = track.redMarkers.find(m => m.imageIndex === imgIdx);
+      return marker ? { marker, track, trackId } : null;
+    }
+  }
+  return null;
+}
+
+function getMarriedPartners(key) {
+  for (const group of marriageGroups) {
+    if (group.includes(key)) {
+      return group.filter(id => id !== key).map(id => {
+        const result = findMarkerByKey(id);
+        return result ? { ...result, key: id } : null;
+      }).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function getCurrentMarkerKey() {
+  const track = getCurrentTrack();
+  if (!track) return null;
+  const marker = track.redMarkers.find(m => m.imageIndex === currentIdx);
+  return marker ? markerKey(track.name, marker.imageIndex) : null;
+}
+
+function calculateBranchPosition(currentMarker, partnerMarker, track) {
+  // Get path bearing (direction of travel)
+  const seqIdx = currentMarker.sequentialIndex;
+  let pathBearing = 0;
+
+  if (seqIdx < track.redMarkers.length - 1) {
+    const next = track.redMarkers[seqIdx + 1];
+    pathBearing = bearingDeg([currentMarker.lon, currentMarker.lat], [next.lon, next.lat]);
+  } else if (seqIdx > 0) {
+    const prev = track.redMarkers[seqIdx - 1];
+    pathBearing = bearingDeg([prev.lon, prev.lat], [currentMarker.lon, currentMarker.lat]);
+  }
+
+  // Bearing to partner
+  const bearingToPartner = bearingDeg(
+    [currentMarker.lon, currentMarker.lat],
+    [partnerMarker.lon, partnerMarker.lat]
+  );
+
+  // Relative angle: positive = right, negative = left
+  let relativeAngle = bearingToPartner - pathBearing;
+  while (relativeAngle > 180) relativeAngle -= 360;
+  while (relativeAngle < -180) relativeAngle += 360;
+
+  return relativeAngle < 0 ? 'left' : 'right';
+}
 
 /* ========================
    MAP EVENTS
@@ -1589,6 +1816,20 @@ function navigateBackward() {
   }
 }
 
+function navigateBranch() {
+  const mKey = getCurrentMarkerKey();
+  if (!mKey) return;
+  const partners = getMarriedPartners(mKey);
+  if (partners.length === 0) return;
+
+  const target = partners[0];
+  // Switch track if needed, then open the partner's image
+  if (target.trackId !== currentTrackId) {
+    selectTrack(target.trackId);
+  }
+  openViewer(target.marker.imageIndex);
+}
+
 /* ========================
    THREE.JS VIEWER
 ======================== */
@@ -1647,6 +1888,7 @@ function updateNavigationRing() {
   const ring = document.querySelector('.navigation-ring');
   const nextBtn = document.getElementById('nextImageBtn');
   const prevBtn = document.getElementById('prevImageBtn');
+  const branchBtnEl = document.getElementById('branchBtn');
   if (!ring || !sphere) return;
 
   const yawDegrees = THREE.MathUtils.radToDeg(currentYaw);
@@ -1665,6 +1907,34 @@ function updateNavigationRing() {
   if (prevBtn) {
     prevBtn.style.opacity = canBackward ? 1 : 0;
     prevBtn.style.pointerEvents = canBackward ? 'auto' : 'none';
+  }
+
+  // Branch button — show if current marble has married partners
+  const mKey = getCurrentMarkerKey();
+  const partners = mKey ? getMarriedPartners(mKey) : [];
+  const canBranch = partners.length > 0;
+
+  // Clear branch position classes
+  ring.classList.remove('branch-left', 'branch-right', 'branch-top', 'branch-bottom');
+
+  if (canBranch) {
+    const track = getCurrentTrack();
+    const currentMarker = track.redMarkers.find(m => m.imageIndex === currentIdx);
+    const partnerMarker = partners[0].marker;
+
+    if (curPos === 0 && !canBackward) {
+      ring.classList.add('branch-bottom');
+    } else if (curPos === pts.length - 1 && !canForward) {
+      ring.classList.add('branch-top');
+    } else {
+      const side = calculateBranchPosition(currentMarker, partnerMarker, track);
+      ring.classList.add(side === 'left' ? 'branch-left' : 'branch-right');
+    }
+  }
+
+  if (branchBtnEl) {
+    branchBtnEl.style.opacity = canBranch ? 1 : 0;
+    branchBtnEl.style.pointerEvents = canBranch ? 'auto' : 'none';
   }
 }
 
@@ -1838,6 +2108,7 @@ function setupViewerEventListeners() {
 
   document.getElementById('nextImageBtn').addEventListener('click', navigateForward);
   document.getElementById('prevImageBtn').addEventListener('click', navigateBackward);
+  document.getElementById('branchBtn').addEventListener('click', navigateBranch);
 
   document.getElementById('zoomInBtn').addEventListener('click', () => {
     if (currentFov > 30) {
@@ -2115,7 +2386,8 @@ document.getElementById('exportBtn').onclick = () => {
       lon: m.lon,
       distanceAlongRoute: m.distanceAlongRoute,
       isLocked: m.isLocked || false
-    }))
+    })),
+    marriages: marriageGroups
   };
 
   const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
@@ -2383,11 +2655,16 @@ function clearAll() {
   dragModeActive = false;
   removePointModeActive = false;
   lockModeActive = false;
+  marryModeActive = false;
+  marrySelection.clear();
+  marriageGroups = [];
   document.getElementById('addCPMode').checked = false;
   document.getElementById('removeCPMode').checked = false;
   document.getElementById('dragMode').checked = false;
   document.getElementById('removePointMode').checked = false;
   document.getElementById('lockMode').checked = false;
+  document.getElementById('marryMode').checked = false;
+  document.getElementById('marrySelectionInfo').style.display = 'none';
 
   undoStack.length = 0;
   redoStack.length = 0;
@@ -2454,6 +2731,14 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('dragMode').disabled = false;
     document.getElementById('exportBtn').disabled = false;
     document.getElementById('exportGpxBtn').disabled = false;
+  }
+
+  // Load marriages if present
+  if (data.marriages && Array.isArray(data.marriages)) {
+    // Merge imported marriages with existing ones
+    data.marriages.forEach(group => {
+      marriageGroups.push(group);
+    });
   }
 
   updateTracksList();
