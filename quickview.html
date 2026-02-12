@@ -13,9 +13,9 @@
   <style>
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; font-family: 'Instrument Sans', sans-serif; overflow: hidden; background: #000; }
-    #main-container { display: flex; flex-direction: column; height: 100vh; }
+    #main-container { display: flex; flex-direction: column; height: 100vh; position: relative; }
 
-    #viewer-section { height: 50%; background: #111; position: relative; display: flex; flex-direction: column; border-bottom: 2px solid #333; }
+    #viewer-section { height: 50%; background: #111; position: relative; display: flex; flex-direction: column; border-bottom: 2px solid #333; margin-left: 280px; }
     #viewer-header { padding: 8px 15px; background: #222; color: white; display: flex; justify-content: space-between; align-items: center; font-size: 13px; z-index: 10; }
     #viewer-body { flex-grow: 1; position: relative; background: #0b1020; }
 
@@ -25,10 +25,11 @@
       -webkit-user-select: none; user-select: none;
     }
 
-    #map-section { height: 50%; position: relative; display: flex; }
+    #map-section { height: 50%; position: relative; display: flex; margin-left: 280px; }
     #left-panel {
+      position: absolute; top: 0; left: 0; bottom: 0;
       width: 280px; background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
-      border-right: 1px solid #333; overflow-y: auto; z-index: 50;
+      border-right: 1px solid #333; overflow-y: auto; z-index: 100;
       box-shadow: 4px 0 12px rgba(0,0,0,0.5);
     }
     #map { flex: 1; height: 100%; }
@@ -249,126 +250,126 @@
     </div>
   </div>
 
-  <div id="map-section">
-    <div id="left-panel">
-      <div class="panel-section">
-        <button class="btn btn-danger" id="clearAllBtn">Clear All</button>
-        <div style="display: flex; gap: 4px; margin-top: 4px;">
-          <button class="btn" id="undoBtn" disabled style="background: linear-gradient(135deg, #666 0%, #444 100%); margin: 0; flex: 1; font-size: 11px;">Undo</button>
-          <button class="btn" id="redoBtn" disabled style="background: linear-gradient(135deg, #666 0%, #444 100%); margin: 0; flex: 1; font-size: 11px;">Redo</button>
-        </div>
-        <div id="undoHint" style="font-size: 9px; color: #555; text-align: center; margin-top: 2px; font-family: 'JetBrains Mono', monospace;"></div>
+  <div id="left-panel">
+    <div class="panel-section">
+      <button class="btn btn-danger" id="clearAllBtn">Clear All</button>
+      <div style="display: flex; gap: 4px; margin-top: 4px;">
+        <button class="btn" id="undoBtn" disabled style="background: linear-gradient(135deg, #666 0%, #444 100%); margin: 0; flex: 1; font-size: 11px;">Undo</button>
+        <button class="btn" id="redoBtn" disabled style="background: linear-gradient(135deg, #666 0%, #444 100%); margin: 0; flex: 1; font-size: 11px;">Redo</button>
       </div>
+      <div id="undoHint" style="font-size: 9px; color: #555; text-align: center; margin-top: 2px; font-family: 'JetBrains Mono', monospace;"></div>
+    </div>
 
-      <div class="panel-section">
-        <div class="section-title">Tracks</div>
-        <div class="track-list" id="tracks-list">
-          <div style="text-align:center; color:#555; font-size:11px; padding:10px;">No tracks loaded</div>
-        </div>
+    <div class="panel-section">
+      <div class="section-title">Tracks</div>
+      <div class="track-list" id="tracks-list">
+        <div style="text-align:center; color:#555; font-size:11px; padding:10px;">No tracks loaded</div>
       </div>
+    </div>
 
-      <div class="panel-section">
-        <div class="section-title">View Controls</div>
+    <div class="panel-section">
+      <div class="section-title">View Controls</div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="showBlueDots" checked>
+        <label for="showBlueDots">Show Blue Dots</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="showRedDots" checked>
+        <label for="showRedDots">Show Red Dots</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="showBlueTrack" checked>
+        <label for="showBlueTrack">Show Blue Track</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="showRedTrack" checked>
+        <label for="showRedTrack">Show Red Track</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="showControlPoints" checked>
+        <label for="showControlPoints">Show Diamond CPs</label>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">Yaw Fix</div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <input type="range" id="yawFixSlider" min="-180" max="180" step="5" value="0" style="flex:1; accent-color:#1fb6ff;">
+        <span id="yawFixValue" style="font-size:11px; color:#1fb6ff; font-weight:600; min-width:36px; text-align:right;">0°</span>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">Smoothing</div>
+      <button class="btn" id="generateRedBtn">Generate Red Track</button>
+      <div style="margin-top: 8px;">
         <div class="checkbox-row">
-          <input type="checkbox" id="showBlueDots" checked>
-          <label for="showBlueDots">Show Blue Dots</label>
+          <input type="checkbox" id="addCPMode">
+          <label for="addCPMode">Add CP Mode</label>
         </div>
         <div class="checkbox-row">
-          <input type="checkbox" id="showRedDots" checked>
-          <label for="showRedDots">Show Red Dots</label>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="showBlueTrack" checked>
-          <label for="showBlueTrack">Show Blue Track</label>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="showRedTrack" checked>
-          <label for="showRedTrack">Show Red Track</label>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="showControlPoints" checked>
-          <label for="showControlPoints">Show Diamond CPs</label>
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-title">Yaw Fix</div>
-        <div style="display:flex; align-items:center; gap:6px;">
-          <input type="range" id="yawFixSlider" min="-180" max="180" step="5" value="0" style="flex:1; accent-color:#1fb6ff;">
-          <span id="yawFixValue" style="font-size:11px; color:#1fb6ff; font-weight:600; min-width:36px; text-align:right;">0°</span>
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-title">Smoothing</div>
-        <button class="btn" id="generateRedBtn">Generate Red Track</button>
-        <div style="margin-top: 8px;">
-          <div class="checkbox-row">
-            <input type="checkbox" id="addCPMode">
-            <label for="addCPMode">Add CP Mode</label>
-          </div>
-          <div class="checkbox-row">
-            <input type="checkbox" id="removeCPMode">
-            <label for="removeCPMode">Remove CP Mode</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-title">Editing</div>
-        <button class="btn" id="projectPointsBtn" disabled>Project Points to Red</button>
-
-        <div style="margin: 12px 0;">
-          <div class="checkbox-row">
-            <input type="checkbox" id="dragMode">
-            <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
-          </div>
-          <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
-            Drag Red dots along curve
-          </div>
-
-          <div class="checkbox-row">
-            <input type="checkbox" id="lockMode">
-            <label for="lockMode" style="color:#ffeb3b; font-weight:bold;">Lock Mode</label>
-          </div>
-          <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
-            Click Red dot to toggle lock (yellow)
-          </div>
-
-          <div class="checkbox-row">
-            <input type="checkbox" id="removePointMode">
-            <label for="removePointMode" style="color:#ff4444; font-weight:bold;">Remove Point Mode</label>
-          </div>
-          <div style="font-size: 10px; color: #666; padding-left: 28px;">
-            Click Red dot to delete & re-index
-          </div>
-
-          <div class="checkbox-row">
-            <input type="checkbox" id="marryMode">
-            <label for="marryMode" style="color:#FF00FF; font-weight:bold;">Marry Mode</label>
-          </div>
-          <div style="font-size: 10px; color: #666; padding-left: 28px;" id="marryHelp">
-            Click red dots to select, uncheck to marry
-          </div>
-          <div id="marrySelectionInfo" style="font-size: 10px; color: #FF00FF; padding-left: 28px; display:none;">
-            Selected: <span id="marrySelectionCount">0</span> pts
-          </div>
-        </div>
-
-        <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
-        <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-title">Status</div>
-        <div style="font-size: 11px; color: #999;">
-          <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
-          <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
-          <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
+          <input type="checkbox" id="removeCPMode">
+          <label for="removeCPMode">Remove CP Mode</label>
         </div>
       </div>
     </div>
 
+    <div class="panel-section">
+      <div class="section-title">Editing</div>
+      <button class="btn" id="projectPointsBtn" disabled>Project Points to Red</button>
+
+      <div style="margin: 12px 0;">
+        <div class="checkbox-row">
+          <input type="checkbox" id="dragMode">
+          <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
+        </div>
+        <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
+          Drag Red dots along curve
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="lockMode">
+          <label for="lockMode" style="color:#ffeb3b; font-weight:bold;">Lock Mode</label>
+        </div>
+        <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
+          Click Red dot to toggle lock (yellow)
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="removePointMode">
+          <label for="removePointMode" style="color:#ff4444; font-weight:bold;">Remove Point Mode</label>
+        </div>
+        <div style="font-size: 10px; color: #666; padding-left: 28px;">
+          Click Red dot to delete & re-index
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="marryMode">
+          <label for="marryMode" style="color:#FF00FF; font-weight:bold;">Marry Mode</label>
+        </div>
+        <div style="font-size: 10px; color: #666; padding-left: 28px;" id="marryHelp">
+          Click red dots to select, uncheck to marry
+        </div>
+        <div id="marrySelectionInfo" style="font-size: 10px; color: #FF00FF; padding-left: 28px; display:none;">
+          Selected: <span id="marrySelectionCount">0</span> pts
+        </div>
+      </div>
+
+      <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
+      <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">Status</div>
+      <div style="font-size: 11px; color: #999;">
+        <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
+        <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
+        <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="map-section">
     <div id="map"></div>
 
     <div id="ui-overlay">
