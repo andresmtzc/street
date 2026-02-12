@@ -434,20 +434,19 @@ let dragModeActive = false;
 let removePointModeActive = false;
 let lockModeActive = false;
 let marryModeActive = false;
-let marrySelection = new Set(); // Set of red marker UIDs
+let marrySelection = new Set(); // Set of "trackId:imageIndex" strings
 
 // Marriage State
-let marriageGroups = []; // Array of arrays of UIDs: [["r-abc123", "r-def456"], ...]
+let marriageGroups = []; // Array of arrays: [["track-1:5", "track-2:12"], ...]
 const marriageColors = [
   '#FF00FF', '#00FFFF', '#FFD700', '#FF6347', '#7B68EE',
   '#00FA9A', '#FF69B4', '#32CD32', '#FF4500', '#1E90FF',
   '#ADFF2F', '#DC143C'
 ];
 
-// Unique ID generator for red markers
-let uidCounter = 0;
-function generateUID() {
-  return 'r-' + (++uidCounter).toString(36) + Math.random().toString(36).substr(2, 4);
+// Marriage identifier: "trackId:imageIndex" — imageIndex is permanent
+function markerKey(trackId, imageIndex) {
+  return `${trackId}:${imageIndex}`;
 }
 
 // Undo System
@@ -528,7 +527,6 @@ function saveUndoState(track) {
       return [ll.lng, ll.lat];
     }),
     redMarkers: track.redMarkers.map(m => ({
-      uid: m.uid,
       lon: m.lon,
       lat: m.lat,
       sequentialIndex: m.sequentialIndex,
@@ -570,7 +568,6 @@ function undo() {
 
   // Restore red markers
   track.redMarkers = state.redMarkers.map(m => ({
-    uid: m.uid,
     lon: m.lon,
     lat: m.lat,
     sequentialIndex: m.sequentialIndex,
@@ -722,9 +719,9 @@ function updateBlueMarkersSource() {
   });
 }
 
-function getMarkerMarriageInfo(uid) {
+function getMarkerMarriageInfo(key) {
   for (let i = 0; i < marriageGroups.length; i++) {
-    if (marriageGroups[i].includes(uid)) {
+    if (marriageGroups[i].includes(key)) {
       return { isMarried: true, groupIndex: i, color: marriageColors[i % marriageColors.length] };
     }
   }
@@ -739,18 +736,19 @@ function updateRedMarkersSource() {
   // Show red markers from ALL tracks (so married dots on other tracks are visible)
   tracks.forEach((track) => {
     track.redMarkers.forEach((m) => {
-      const mInfo = getMarkerMarriageInfo(m.uid);
+      const key = markerKey(track.id, m.imageIndex);
+      const mInfo = getMarkerMarriageInfo(key);
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
         properties: {
-          uid: m.uid,
+          markerKey: key,
           trackId: track.id,
           sequentialIndex: m.sequentialIndex,
           imageIndex: m.imageIndex,
           isActive: (track.id === currentTrackId && m.imageIndex === currentIdx),
           isLocked: m.isLocked || false,
-          isMarrySelected: marrySelection.has(m.uid),
+          isMarrySelected: marrySelection.has(key),
           isMarried: mInfo.isMarried,
           marriageColor: mInfo.color
         }
@@ -913,11 +911,11 @@ function setupMarkerEvents() {
     const f = e.features[0].properties;
 
     if (marryModeActive) {
-      const uid = f.uid;
-      if (marrySelection.has(uid)) {
-        marrySelection.delete(uid);
+      const key = f.markerKey;
+      if (marrySelection.has(key)) {
+        marrySelection.delete(key);
       } else {
-        marrySelection.add(uid);
+        marrySelection.add(key);
       }
       updateMarrySelectionUI();
       updateRedMarkersSource();
@@ -1105,7 +1103,7 @@ function removeTrack(trackId) {
 
   // Clean up marriages referencing this track's markers
   track.redMarkers.forEach(m => {
-    if (m.uid) cleanupMarriagesForDeletedUID(m.uid);
+    divorceMarkerByKey(markerKey(trackId, m.imageIndex));
   });
 
   // Revoke blob URLs
@@ -1376,7 +1374,6 @@ function projectPointsToRed(track) {
     const isEndpoint = (idx === 0 || idx === track.rawPoints.length - 1);
 
     track.redMarkers.push({
-      uid: generateUID(),
       lon: coord[0],
       lat: coord[1],
       sequentialIndex: idx,
@@ -1410,8 +1407,8 @@ function deleteRedPoint(sequentialIndex) {
 
   // Clean up any marriages referencing this marker
   const deletedMarker = track.redMarkers[sequentialIndex];
-  if (deletedMarker && deletedMarker.uid) {
-    cleanupMarriagesForDeletedUID(deletedMarker.uid);
+  if (deletedMarker) {
+    divorceMarkerByKey(markerKey(track.id, deletedMarker.imageIndex));
   }
 
   track.redMarkers.splice(sequentialIndex, 1);
@@ -1549,16 +1546,16 @@ document.getElementById('marryMode').onchange = (e) => {
     // Turning OFF marry mode — commit the marriage or divorce
     marryModeActive = false;
     if (marrySelection.size >= 2) {
-      // Check if any selected are already married — if so, divorce them first
+      // Check if any selected are already married — if so, divorce them
       let alreadyMarried = false;
-      for (const uid of marrySelection) {
-        const info = getMarkerMarriageInfo(uid);
+      for (const key of marrySelection) {
+        const info = getMarkerMarriageInfo(key);
         if (info.isMarried) { alreadyMarried = true; break; }
       }
       if (alreadyMarried) {
         // Divorce: remove all selected from their groups
-        for (const uid of marrySelection) {
-          divorceMarkerByUID(uid);
+        for (const key of marrySelection) {
+          divorceMarkerByKey(key);
         }
       } else {
         // Marry: create new group
@@ -1566,8 +1563,8 @@ document.getElementById('marryMode').onchange = (e) => {
       }
     } else if (marrySelection.size === 1) {
       // Single selection — divorce it if married
-      const uid = [...marrySelection][0];
-      divorceMarkerByUID(uid);
+      const key = [...marrySelection][0];
+      divorceMarkerByKey(key);
     }
     marrySelection.clear();
     updateMarrySelectionUI();
@@ -1587,9 +1584,9 @@ function updateMarrySelectionUI() {
   }
 }
 
-function divorceMarkerByUID(uid) {
+function divorceMarkerByKey(key) {
   for (let i = 0; i < marriageGroups.length; i++) {
-    const idx = marriageGroups[i].indexOf(uid);
+    const idx = marriageGroups[i].indexOf(key);
     if (idx !== -1) {
       marriageGroups[i].splice(idx, 1);
       if (marriageGroups[i].length < 2) {
@@ -1601,38 +1598,35 @@ function divorceMarkerByUID(uid) {
   return false;
 }
 
-function cleanupMarriagesForDeletedUID(uid) {
-  divorceMarkerByUID(uid);
-}
-
 /* ========================
    MARRIAGE NAVIGATION HELPERS
 ======================== */
-function findMarkerByUID(uid) {
-  for (const [trackId, track] of tracks) {
-    const marker = track.redMarkers.find(m => m.uid === uid);
-    if (marker) return { marker, track, trackId };
-  }
-  return null;
+function findMarkerByKey(key) {
+  const [trackId, imgIdxStr] = key.split(':');
+  const imgIdx = parseInt(imgIdxStr);
+  const track = tracks.get(trackId);
+  if (!track) return null;
+  const marker = track.redMarkers.find(m => m.imageIndex === imgIdx);
+  return marker ? { marker, track, trackId } : null;
 }
 
-function getMarriedPartners(uid) {
+function getMarriedPartners(key) {
   for (const group of marriageGroups) {
-    if (group.includes(uid)) {
-      return group.filter(id => id !== uid).map(id => {
-        const result = findMarkerByUID(id);
-        return result ? { ...result, uid: id } : null;
+    if (group.includes(key)) {
+      return group.filter(id => id !== key).map(id => {
+        const result = findMarkerByKey(id);
+        return result ? { ...result, key: id } : null;
       }).filter(Boolean);
     }
   }
   return [];
 }
 
-function getCurrentMarkerUID() {
+function getCurrentMarkerKey() {
   const track = getCurrentTrack();
   if (!track) return null;
   const marker = track.redMarkers.find(m => m.imageIndex === currentIdx);
-  return marker ? marker.uid : null;
+  return marker ? markerKey(track.id, marker.imageIndex) : null;
 }
 
 function calculateBranchPosition(currentMarker, partnerMarker, track) {
@@ -1773,9 +1767,9 @@ function navigateBackward() {
 }
 
 function navigateBranch() {
-  const uid = getCurrentMarkerUID();
-  if (!uid) return;
-  const partners = getMarriedPartners(uid);
+  const mKey = getCurrentMarkerKey();
+  if (!mKey) return;
+  const partners = getMarriedPartners(mKey);
   if (partners.length === 0) return;
 
   const target = partners[0];
@@ -1866,8 +1860,8 @@ function updateNavigationRing() {
   }
 
   // Branch button — show if current marble has married partners
-  const uid = getCurrentMarkerUID();
-  const partners = uid ? getMarriedPartners(uid) : [];
+  const mKey = getCurrentMarkerKey();
+  const partners = mKey ? getMarriedPartners(mKey) : [];
   const canBranch = partners.length > 0;
 
   // Clear branch position classes
@@ -1875,7 +1869,7 @@ function updateNavigationRing() {
 
   if (canBranch) {
     const track = getCurrentTrack();
-    const currentMarker = track.redMarkers.find(m => m.uid === uid);
+    const currentMarker = track.redMarkers.find(m => m.imageIndex === currentIdx);
     const partnerMarker = partners[0].marker;
 
     if (curPos === 0 && !canBackward) {
@@ -2336,7 +2330,6 @@ document.getElementById('exportBtn').onclick = () => {
       return { lon: ll.lng, lat: ll.lat };
     }),
     redMarkers: track.redMarkers.map(m => ({
-      uid: m.uid,
       sequentialIndex: m.sequentialIndex,
       originalImageIndex: m.imageIndex,
       lat: m.lat,
@@ -2669,7 +2662,6 @@ document.getElementById('importRedInput').onchange = async (e) => {
     data.redMarkers.forEach((p, idx) => {
       const isEndpoint = (idx === 0 || idx === data.redMarkers.length - 1);
       track.redMarkers.push({
-        uid: p.uid || generateUID(),
         lon: p.lon,
         lat: p.lat,
         sequentialIndex: p.sequentialIndex,
