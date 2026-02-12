@@ -1,0 +1,1662 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mapbox Viewer — Advanced Path Editing</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Instrument+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: 'Instrument Sans', sans-serif; overflow: hidden; background: #000; }
+    #main-container { display: flex; flex-direction: column; height: 100vh; }
+
+    #viewer-section { height: 50%; background: #111; position: relative; display: flex; flex-direction: column; border-bottom: 2px solid #333; }
+    #viewer-header { padding: 8px 15px; background: #222; color: white; display: flex; justify-content: space-between; align-items: center; font-size: 13px; z-index: 10; }
+    #viewer-body { flex-grow: 1; position: relative; background: #0b1020; }
+
+    #canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      touch-action: none; pointer-events: auto;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    #map-section { height: 50%; position: relative; display: flex; }
+    #left-panel {
+      width: 280px; background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
+      border-right: 1px solid #333; overflow-y: auto; z-index: 50;
+      box-shadow: 4px 0 12px rgba(0,0,0,0.5);
+    }
+    #map { flex: 1; height: 100%; }
+
+    .panel-section { border-bottom: 1px solid #2a2a2a; padding: 16px; }
+
+    .section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+      color: #666; text-transform: uppercase; margin-bottom: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .checkbox-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 0; cursor: pointer;
+      border-radius: 4px; margin: 0 -6px; padding-left: 6px;
+    }
+    .checkbox-row:hover { background: rgba(255,255,255,0.03); }
+    .checkbox-row input[type="checkbox"] { accent-color: #1fb6ff; cursor: pointer; }
+    .checkbox-row label { color: #ccc; font-size: 13px; cursor: pointer; flex: 1; }
+
+    .btn {
+      width: 100%; padding: 10px 14px;
+      background: linear-gradient(135deg, #1fb6ff 0%, #0d8fd9 100%);
+      border: none; border-radius: 6px; color: white;
+      font-weight: 600; font-size: 12px; cursor: pointer; margin: 8px 0;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled { background: #2a2a2a; color: #666; cursor: not-allowed; transform: none; }
+    .btn-danger { background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); }
+
+    /* MARKERS */
+    .custom-marker {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 1.5px solid white; cursor: pointer; transition: 0.2s;
+      display: flex; justify-content: center; align-items: center;
+      font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700;
+      color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      z-index: 5;
+    }
+
+    /* Blue Dots (Original) */
+    .blue-dot { background-color: #2b6df6; }
+    .blue-dot.active {
+      background-color: #00ffff !important;
+      border-color: #000;
+      transform: scale(1.5);
+      z-index: 20;
+      box-shadow: 0 0 12px #00ffff;
+    }
+    .blue-dot:hover { z-index: 15; transform: scale(1.2); }
+
+    /* Red Dots (Projected) */
+    .red-dot { background-color: #ff4444; border-color: #fff; z-index: 10; }
+    .red-dot.active {
+      background-color: #00ffff !important;
+      border-color: #000;
+      transform: scale(1.5);
+      z-index: 20;
+      box-shadow: 0 0 12px #00ffff;
+    }
+    .red-dot:hover { z-index: 15; transform: scale(1.2); }
+
+    /* Delete Cursor */
+    .delete-cursor { cursor: not-allowed !important; }
+    .delete-cursor:hover { transform: scale(0.9); opacity: 0.8; }
+
+    /* Control Point Markers */
+    .control-point-marker {
+      width: 14px; height: 14px; background: #ffeb3b;
+      border: 2px solid #000; transform: rotate(45deg);
+      cursor: move; box-shadow: 0 0 8px rgba(255,235,59,0.6);
+      z-index: 30;
+    }
+
+    #ui-overlay {
+      position: absolute; top: 10px; right: 10px;
+      background: rgba(0,0,0,0.85); padding: 12px; border-radius: 8px;
+      display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+      color: white; z-index: 20; border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    /* ===== THREE.JS VIEWER STYLES ===== */
+    .image-controls {
+      position: absolute; bottom: 10px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center;
+      z-index: 20; pointer-events: none;
+    }
+
+    .navigation-ring {
+      position: relative; width: 160px; height: 160px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      user-select: none;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+    }
+
+    .nav-button.ring-button {
+      position: absolute; width: 40px; height: 40px;
+      border: none; border-radius: 50%;
+      background: rgba(0,0,0,0);
+      color: #fcfaf3;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; cursor: pointer;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      z-index: 21;
+    }
+
+    #nextImageBtn.ring-button { top: 15px; left: 50%; }
+    #prevImageBtn.ring-button { bottom: 15px; left: 50%; }
+
+    .nav-button.ring-button:hover {
+      transform: translateX(-50%) scale(1.2);
+    }
+
+    .time {
+      position: absolute; right: 20px; bottom: 20px;
+      color: #22d3ee; font-weight: 600; font-size: 14px;
+      z-index: 25;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .zoom-controls {
+      position: absolute; right: 10px; top: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 5;
+    }
+
+    .zoom-btn {
+      width: 36px; height: 36px;
+      background: rgba(0,0,0,0.7); border: 1px solid #555;
+      color: white; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; cursor: pointer;
+    }
+    .zoom-btn:hover { background: rgba(0,0,0,0.9); }
+
+    #viewer-loading {
+      display: none; position: absolute;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 100; background: rgba(0,0,0,0.7);
+      padding: 20px; border-radius: 10px;
+      text-align: center; color: white;
+    }
+
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid rgba(255,255,255,0.1);
+      border-radius: 50%; border-top: 4px solid #22d3ee;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    #empty-msg {
+      height: 100%; display: flex; justify-content: center;
+      align-items: center; color: #555;
+      position: absolute; top: 0; left: 0; width: 100%;
+      z-index: 5; pointer-events: none;
+    }
+
+  </style>
+</head>
+<body>
+
+<div id="main-container">
+  <div id="viewer-section">
+    <div id="viewer-header">
+      <div><b id="viewer-title">Street View</b> <span id="viewer-meta" style="margin-left:10px; opacity:0.7;"></span></div>
+    </div>
+    <div id="viewer-body">
+      <canvas id="canvas"></canvas>
+      <div id="empty-msg">Load data to begin</div>
+
+      <!-- Loading spinner -->
+      <div id="viewer-loading">
+        <div class="spinner"></div>
+        <div id="loading-text">Loading 360 image...</div>
+      </div>
+
+      <!-- Navigation ring -->
+      <div class="image-controls">
+        <div class="navigation-ring">
+          <button class="nav-button ring-button" id="nextImageBtn">&#9651;</button>
+          <button class="nav-button ring-button" id="prevImageBtn">&#9661;</button>
+        </div>
+      </div>
+
+      <!-- Image counter -->
+      <div class="time" id="time">-/-</div>
+
+      <!-- Zoom controls -->
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoomInBtn">+</button>
+        <button class="zoom-btn" id="zoomOutBtn">&minus;</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="map-section">
+    <div id="left-panel">
+      <div class="panel-section">
+        <button class="btn btn-danger" id="clearAllBtn">Clear All</button>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">View Controls</div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showBlueDots" checked>
+          <label for="showBlueDots">Show Blue Dots</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showRedDots" checked>
+          <label for="showRedDots">Show Red Dots</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showBlueTrack" checked>
+          <label for="showBlueTrack">Show Blue Track</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showRedTrack">
+          <label for="showRedTrack">Show Red Track</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="showControlPoints" checked>
+          <label for="showControlPoints">Show Diamond CPs</label>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Smoothing</div>
+        <button class="btn" id="generateRedBtn">Generate Red Track</button>
+        <div style="margin-top: 8px;">
+          <div class="checkbox-row">
+            <input type="checkbox" id="addCPMode">
+            <label for="addCPMode">Add CP Mode</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="removeCPMode">
+            <label for="removeCPMode">Remove CP Mode</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Editing</div>
+        <button class="btn" id="projectPointsBtn" disabled>Project Points to Red</button>
+
+        <div style="margin: 12px 0;">
+          <div class="checkbox-row">
+            <input type="checkbox" id="autoReproject">
+            <label for="autoReproject">Auto-reproject on curve edit</label>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="dragMode">
+            <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px; margin-bottom:5px;">
+            Drag Red dots along curve
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="removePointMode">
+            <label for="removePointMode" style="color:#ff4444; font-weight:bold;">Remove Point Mode</label>
+          </div>
+          <div style="font-size: 10px; color: #666; padding-left: 28px;">
+            Click Red dot to delete & re-index
+          </div>
+        </div>
+
+        <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
+        <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Status</div>
+        <div style="font-size: 11px; color: #999;">
+          <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
+          <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="ui-overlay">
+      <div style="display:flex; flex-direction:column; gap:4px; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 6px;">
+        <label style="font-size:10px; font-weight:bold; color:#26a269;">CREATE BLUE POINTS</label>
+        <input id="gpxInput" type="file" accept=".gpx" style="font-size:11px; max-width: 180px;"/>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input id="numPointsInput" type="number" min="2" value="10" style="width:50px; font-size:11px; padding:2px 4px; background:#222; border:1px solid #444; color:white; border-radius:3px;"/>
+          <span style="font-size:10px; color:#999;">points</span>
+        </div>
+        <button id="generateFromGpxBtn" disabled style="background:#26a269; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Generate Points</button>
+        <button id="exportCreatedJsonBtn" disabled style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Export JSON</button>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:10px; font-weight:bold; color:#1fb6ff;">LOAD BLUE POINTS</label>
+        <input id="jsonInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:10px; font-weight:bold; color:#ff4444;">IMPORT RED PATH</label>
+        <input id="importRedInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:10px; font-weight:bold; color:#1fb6ff;">LOCAL IMAGES</label>
+        <input id="imagesInput" type="file" webkitdirectory directory multiple style="font-size:11px; max-width: 180px;"/>
+      </div>
+      <button id="fitBtn" style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Recenter</button>
+    </div>
+  </div>
+</div>
+
+<script>
+mapboxgl.accessToken = "pk.eyJ1IjoiYW5kcmVzbXR6YyIsImEiOiJjbWl5eWQ0a2gwbDRlM2RweTN6ZXY1MmRsIn0.RDhU90VJPV_Bcjt1tab-MQ";
+
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/satellite-streets-v12',
+  center: [-100.3483, 25.6752],
+  zoom: 15
+});
+
+// Data Storage
+let rawPoints = []; // The loaded JSON data
+let blueMarkers = []; // Original Blue Dots
+let redMarkers = [];  // Projected Red Dots (Object: { marker, data })
+let controlPointMarkers = [];
+let controlPoints = [];
+
+// Viewer State
+let imagesByIndex = {};
+let currentIdx = -1;
+
+// Three.js Viewer State
+let scene, camera, renderer, sphere, panoGroup;
+let currentYaw = 0, currentPitch = 0, currentFov = 75;
+let viewerInitialized = false;
+let preloadedImages = {};
+
+// Logic State
+let redTrackLine = null;
+let addCPModeActive = false;
+let removeCPModeActive = false;
+let dragModeActive = false;
+let removePointModeActive = false;
+
+/* ========================
+   CATMULL-ROM SPLINE
+======================== */
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return [
+    0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+    0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+  ];
+}
+
+function generateCatmullRomCurve(controlPts, segmentsPerSection = 20) {
+  if (controlPts.length < 2) return controlPts;
+  const curve = [];
+  const n = controlPts.length;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = i === 0 ? controlPts[i] : controlPts[i - 1];
+    const p1 = controlPts[i];
+    const p2 = controlPts[i + 1];
+    const p3 = i === n - 2 ? controlPts[i + 1] : controlPts[i + 2];
+    for (let j = 0; j < segmentsPerSection; j++) {
+      curve.push(catmullRom(p0, p1, p2, p3, j / segmentsPerSection));
+    }
+  }
+  curve.push(controlPts[n - 1]);
+  return curve;
+}
+
+/* ========================
+   INITIALIZATION
+======================== */
+
+// GPX Creation State
+let loadedGpxTrack = null; // Stores parsed GPX track as turf lineString
+
+/* ========================
+   GPX PARSING & POINT GENERATION
+======================== */
+function parseGpxFile(gpxText) {
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(gpxText, 'application/xml');
+  const trkpts = xml.querySelectorAll('trkpt');
+
+  if (trkpts.length === 0) {
+    alert('No track points found in GPX file');
+    return null;
+  }
+
+  const coordinates = [];
+  trkpts.forEach(pt => {
+    const lat = parseFloat(pt.getAttribute('lat'));
+    const lon = parseFloat(pt.getAttribute('lon'));
+    if (!isNaN(lat) && !isNaN(lon)) {
+      coordinates.push([lon, lat]);
+    }
+  });
+
+  if (coordinates.length < 2) {
+    alert('GPX file must have at least 2 valid track points');
+    return null;
+  }
+
+  return turf.lineString(coordinates);
+}
+
+function generatePointsFromGpx(trackLine, numPoints) {
+  if (!trackLine || numPoints < 2) return [];
+
+  const totalLength = turf.length(trackLine);
+  const points = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    const distance = (i / (numPoints - 1)) * totalLength;
+    const pointOnLine = turf.along(trackLine, distance);
+    const coord = pointOnLine.geometry.coordinates;
+
+    points.push({
+      index: i + 1,
+      lat: coord[1],
+      lon: coord[0]
+    });
+  }
+
+  return points;
+}
+
+function processRawPoints(points) {
+  rawPoints = points.sort((a,b) => a.index - b.index);
+
+  // Clear existing blue markers
+  blueMarkers.forEach(m => m.remove());
+  blueMarkers = [];
+
+  // 1. Draw Blue Track
+  if (map.getSource('blue-track')) map.removeSource('blue-track');
+  if (map.getLayer('blue-track')) map.removeLayer('blue-track');
+
+  map.addSource('blue-track', {
+    type:'geojson',
+    data: { type:'Feature', geometry: { type:'LineString', coordinates: rawPoints.map(p=>[p.lon,p.lat]) } }
+  });
+  map.addLayer({
+    id:'blue-track', type:'line', source:'blue-track',
+    paint: { 'line-color':'#2b6df6', 'line-width':3, 'line-opacity': 0.6 }
+  });
+
+  // 2. Create Blue Dots
+  rawPoints.forEach((p, arrayIndex) => {
+    const el = document.createElement('div');
+    el.className = 'custom-marker blue-dot';
+    el.innerText = p.index;
+    el.onclick = () => openViewer(p.index);
+
+    const marker = new mapboxgl.Marker({ element: el })
+      .setLngLat([p.lon, p.lat])
+      .addTo(map);
+
+    blueMarkers.push(marker);
+  });
+
+  updateDotsVisibility();
+  updateMarkerColors();
+  updateStatus();
+  fitToTrack();
+  if(rawPoints.length > 0) openViewer(rawPoints[0].index);
+}
+
+/* ========================
+   RED TRACK GENERATION
+======================== */
+function generateRedTrack() {
+  const cpCount = Math.max(4, Math.round(rawPoints.length / 5));
+  const step = Math.floor(rawPoints.length / (cpCount - 1));
+
+  controlPointMarkers.forEach(m => m.remove());
+  controlPointMarkers = [];
+  controlPoints = [];
+
+  for (let i = 0; i < rawPoints.length; i += step) {
+    controlPoints.push([rawPoints[i].lon, rawPoints[i].lat]);
+    if (controlPoints.length >= cpCount - 1) break;
+  }
+  const lastP = rawPoints[rawPoints.length - 1];
+  controlPoints.push([lastP.lon, lastP.lat]);
+
+  controlPoints.forEach(cp => createCPMarker(cp));
+
+  updateRedTrackLine();
+  document.getElementById('showRedTrack').checked = true;
+  document.getElementById('projectPointsBtn').disabled = false;
+  updateStatus();
+}
+
+function createCPMarker(lngLat) {
+  const el = document.createElement('div');
+  el.className = 'control-point-marker';
+
+  const marker = new mapboxgl.Marker({ element: el, draggable: true })
+    .setLngLat(lngLat)
+    .addTo(map);
+
+  el.onclick = (e) => {
+    if (removeCPModeActive && controlPointMarkers.length > 3) {
+      e.stopPropagation();
+      marker.remove();
+      controlPointMarkers = controlPointMarkers.filter(m => m !== marker);
+      updateRedTrackLine();
+    }
+  };
+
+  marker.on('drag', updateRedTrackLine);
+  marker.on('dragend', () => {
+    updateRedTrackLine();
+    if (document.getElementById('autoReproject').checked && rawPoints.length > 0 && redMarkers.length > 0) {
+      projectPointsToRed();
+    }
+  });
+  controlPointMarkers.push(marker);
+  updateControlsVisibility();
+}
+
+function updateRedTrackLine() {
+  controlPoints = controlPointMarkers.map(m => { const ll = m.getLngLat(); return [ll.lng, ll.lat]; });
+
+  const smoothCurve = generateCatmullRomCurve(controlPoints, 30);
+  redTrackLine = turf.lineString(smoothCurve);
+
+  if (map.getLayer('red-track')) map.removeLayer('red-track');
+  if (map.getSource('red-track')) map.removeSource('red-track');
+
+  map.addSource('red-track', {
+    type: 'geojson',
+    data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
+  });
+
+  map.addLayer({
+    id: 'red-track', type: 'line', source: 'red-track',
+    paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
+    layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
+  });
+}
+
+/* ========================
+   PROJECT TO RED DOTS
+======================== */
+function projectPointsToRed() {
+  if (!redTrackLine) return;
+
+  redMarkers.forEach(item => item.marker.remove());
+  redMarkers = [];
+
+  const blueTrack = turf.lineString(rawPoints.map(p => [p.lon, p.lat]));
+  const blueLen = turf.length(blueTrack);
+  const redLen = turf.length(redTrackLine);
+
+  let cumulativeDist = 0;
+
+  rawPoints.forEach((p, idx) => {
+    if (idx > 0) {
+      const prev = rawPoints[idx-1];
+      cumulativeDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
+    }
+
+    const ratio = blueLen > 0 ? cumulativeDist / blueLen : 0;
+    const pointOnRed = turf.along(redTrackLine, ratio * redLen);
+    const coord = pointOnRed.geometry.coordinates;
+
+    const imageIndex = p.index;
+    createRedMarker(coord, idx, imageIndex);
+  });
+
+  document.getElementById('showRedDots').checked = true;
+  document.getElementById('dragMode').disabled = false;
+  document.getElementById('exportBtn').disabled = false;
+  document.getElementById('exportGpxBtn').disabled = false;
+  updateStatus();
+}
+
+function createRedMarker(coord, sequentialIndex, imageIndex) {
+  const el = document.createElement('div');
+  el.className = 'custom-marker red-dot';
+  el.innerText = imageIndex;
+  el.title = `Sequence ${sequentialIndex}`;
+
+  const marker = new mapboxgl.Marker({ element: el, draggable: false })
+    .setLngLat(coord)
+    .addTo(map);
+
+  const markerObj = {
+    marker: marker,
+    data: {
+      lon: coord[0],
+      lat: coord[1],
+      sequentialIndex: sequentialIndex,
+      imageIndex: imageIndex,
+      associatedImage: imagesByIndex[imageIndex]
+    }
+  };
+
+  el.onclick = (e) => {
+    if (removePointModeActive) {
+      deleteRedPoint(markerObj);
+      return;
+    }
+    if (!dragModeActive && !removePointModeActive) {
+      openViewer(imageIndex);
+    }
+  };
+
+  marker.on('dragstart', () => {
+    if (!dragModeActive) marker.setDraggable(false);
+  });
+
+  marker.on('drag', () => {
+    const ll = marker.getLngLat();
+    const point = turf.point([ll.lng, ll.lat]);
+    const snapped = turf.nearestPointOnLine(redTrackLine, point);
+    marker.setLngLat(snapped.geometry.coordinates);
+    markerObj.data.lon = snapped.geometry.coordinates[0];
+    markerObj.data.lat = snapped.geometry.coordinates[1];
+  });
+
+  redMarkers.push(markerObj);
+  updateDotsVisibility();
+}
+
+/* ========================
+   DELETE & RE-INDEX RED DOTS
+======================== */
+function deleteRedPoint(targetObj) {
+  const deletedImageIndex = targetObj.data.imageIndex;
+  targetObj.marker.remove();
+  const indexToRemove = redMarkers.indexOf(targetObj);
+  if (indexToRemove > -1) {
+    redMarkers.splice(indexToRemove, 1);
+  }
+
+  redMarkers.forEach((item, newSeqIndex) => {
+    item.data.sequentialIndex = newSeqIndex;
+  });
+
+  updateStatus();
+}
+
+/* ========================
+   UI & TOGGLES
+======================== */
+function updateDotsVisibility() {
+  const showBlue = document.getElementById('showBlueDots').checked;
+  const showRed = document.getElementById('showRedDots').checked;
+
+  blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
+  redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
+}
+
+function updateControlsVisibility() {
+  const show = document.getElementById('showControlPoints').checked;
+  controlPointMarkers.forEach(m => m.getElement().style.display = show ? 'block' : 'none');
+}
+
+function updateStatus() {
+  document.getElementById('blueCount').innerText = blueMarkers.length;
+  document.getElementById('projectedCount').innerText = redMarkers.length;
+
+  if (redMarkers.length > 0) {
+    const firstImage = redMarkers[0].data.imageIndex;
+    const lastImage = redMarkers[redMarkers.length - 1].data.imageIndex;
+    document.getElementById('viewer-meta').textContent =
+      `Images: ${firstImage} -> ${lastImage} (${redMarkers.length} points)`;
+  }
+}
+
+document.getElementById('showBlueDots').onchange = updateDotsVisibility;
+document.getElementById('showRedDots').onchange = updateDotsVisibility;
+
+document.getElementById('showBlueTrack').onchange = (e) => {
+  if (map.getLayer('blue-track')) map.setLayoutProperty('blue-track', 'visibility', e.target.checked ? 'visible' : 'none');
+};
+document.getElementById('showRedTrack').onchange = (e) => {
+  if (map.getLayer('red-track')) map.setLayoutProperty('red-track', 'visibility', e.target.checked ? 'visible' : 'none');
+};
+document.getElementById('showControlPoints').onchange = updateControlsVisibility;
+
+// MODES
+document.getElementById('addCPMode').onchange = (e) => {
+  addCPModeActive = e.target.checked;
+  removeCPModeActive = false; document.getElementById('removeCPMode').checked = false;
+  map.getCanvas().style.cursor = addCPModeActive ? 'crosshair' : '';
+};
+
+document.getElementById('removeCPMode').onchange = (e) => {
+  removeCPModeActive = e.target.checked;
+  addCPModeActive = false; document.getElementById('addCPMode').checked = false;
+  map.getCanvas().style.cursor = '';
+};
+
+document.getElementById('dragMode').onchange = (e) => {
+  dragModeActive = e.target.checked;
+  removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+
+  redMarkers.forEach(m => {
+    m.marker.setDraggable(dragModeActive);
+    m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
+  });
+};
+
+document.getElementById('removePointMode').onchange = (e) => {
+  removePointModeActive = e.target.checked;
+  dragModeActive = false; document.getElementById('dragMode').checked = false;
+
+  redMarkers.forEach(m => {
+    m.marker.setDraggable(false);
+    const el = m.marker.getElement();
+    if (removePointModeActive) {
+      el.classList.add('delete-cursor');
+    } else {
+      el.classList.remove('delete-cursor');
+      el.style.cursor = 'pointer';
+    }
+  });
+};
+
+/* ========================
+   MAP EVENTS
+======================== */
+map.on('click', (e) => {
+  if (addCPModeActive && redTrackLine) {
+    const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
+    const snapped = turf.nearestPointOnLine(redTrackLine, point);
+    createCPMarker(snapped.geometry.coordinates);
+    updateRedTrackLine();
+  }
+});
+
+/* ========================
+   BEARING & GEOMETRY HELPERS
+======================== */
+function bearingDeg(a, b) {
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
+  const lon1 = toRad(a[0]), lon2 = toRad(b[0]);
+  const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function degToRad(d) { return d * Math.PI / 180; }
+function radToDeg(r) { return r * 180 / Math.PI; }
+
+function destFromBearingDistance(lat, lon, brngDeg, distMeters) {
+  const R = 6378137;
+  const brng = degToRad(brngDeg);
+  const lat1 = degToRad(lat), lon1 = degToRad(lon);
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distMeters / R) +
+    Math.cos(lat1) * Math.sin(distMeters / R) * Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(distMeters / R) * Math.cos(lat1),
+    Math.cos(distMeters / R) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return [radToDeg(lon2), radToDeg(lat2)];
+}
+
+/* ========================
+   NAVIGATION HELPERS
+======================== */
+function getActivePoints() {
+  if (redMarkers.length > 0) {
+    return redMarkers.map(m => ({
+      index: m.data.imageIndex,
+      lon: m.data.lon,
+      lat: m.data.lat
+    }));
+  }
+  return rawPoints;
+}
+
+function getCurrentPointPosition() {
+  const pts = getActivePoints();
+  const pt = pts.find(p => p.index === currentIdx);
+  return pt ? [pt.lon, pt.lat] : null;
+}
+
+function getNextPointPosition() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos >= 0 && curPos < pts.length - 1) {
+    const next = pts[curPos + 1];
+    return [next.lon, next.lat];
+  }
+  return null;
+}
+
+function getPrevPointPosition() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos > 0) {
+    const prev = pts[curPos - 1];
+    return [prev.lon, prev.lat];
+  }
+  return null;
+}
+
+function navigateForward() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos >= 0 && curPos < pts.length - 1) {
+    openViewer(pts[curPos + 1].index);
+  }
+}
+
+function navigateBackward() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos > 0) {
+    openViewer(pts[curPos - 1].index);
+  }
+}
+
+/* ========================
+   THREE.JS VIEWER
+======================== */
+function initThreeJSViewer() {
+  if (viewerInitialized) return;
+
+  scene = new THREE.Scene();
+  panoGroup = new THREE.Group();
+  scene.add(panoGroup);
+
+  const canvas = document.getElementById('canvas');
+  camera = new THREE.PerspectiveCamera(currentFov, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+  camera.position.set(0, 0, 0.1);
+
+  renderer = new THREE.WebGLRenderer({
+    canvas: canvas,
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance'
+  });
+
+  const dpr = Math.min(window.devicePixelRatio || 2, 3);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+
+  setupViewerEventListeners();
+  animateViewer();
+  viewerInitialized = true;
+}
+
+function animateViewer() {
+  requestAnimationFrame(animateViewer);
+  updateNavigationRing();
+  if (renderer && scene && camera) {
+    renderer.render(scene, camera);
+  }
+}
+
+function resizeViewer() {
+  if (!renderer || !camera) return;
+  const canvas = document.getElementById('canvas');
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w === 0 || h === 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+
+window.addEventListener('resize', resizeViewer);
+
+/* ========================
+   NAVIGATION RING
+======================== */
+function updateNavigationRing() {
+  const ring = document.querySelector('.navigation-ring');
+  const nextBtn = document.getElementById('nextImageBtn');
+  const prevBtn = document.getElementById('prevImageBtn');
+  if (!ring || !sphere) return;
+
+  // Rotate ring to match yaw
+  const yawDegrees = THREE.MathUtils.radToDeg(currentYaw);
+  ring.style.transform = `rotateZ(${-yawDegrees}deg)`;
+
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+
+  const canForward = curPos >= 0 && curPos < pts.length - 1;
+  const canBackward = curPos > 0;
+
+  if (nextBtn) {
+    nextBtn.style.opacity = canForward ? 1 : 0;
+    nextBtn.style.pointerEvents = canForward ? 'auto' : 'none';
+  }
+  if (prevBtn) {
+    prevBtn.style.opacity = canBackward ? 1 : 0;
+    prevBtn.style.pointerEvents = canBackward ? 'auto' : 'none';
+  }
+}
+
+/* ========================
+   SPHERE IMAGE DISPLAY
+======================== */
+function applyImageToSphere(img) {
+  // Remove old sphere
+  if (sphere) {
+    panoGroup.remove(sphere);
+    if (sphere.geometry) sphere.geometry.dispose();
+    if (sphere.material) {
+      if (sphere.material.map) sphere.material.map.dispose();
+      sphere.material.dispose();
+    }
+  }
+
+  const geometry = new THREE.SphereGeometry(100, 60, 40);
+  geometry.scale(-1, 1, 1);
+  geometry.rotateY(Math.PI);
+
+  const texture = new THREE.Texture(img);
+  texture.needsUpdate = true;
+
+  const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+  sphere = new THREE.Mesh(geometry, material);
+
+  // Keep current orientation
+  sphere.rotation.y = currentYaw;
+  sphere.rotation.x = currentPitch;
+
+  panoGroup.add(sphere);
+  updateNavigationRing();
+}
+
+function loadImageToViewer(imageUrl) {
+  if (!viewerInitialized) {
+    initThreeJSViewer();
+  }
+
+  // Check preload cache
+  if (preloadedImages[imageUrl]) {
+    applyImageToSphere(preloadedImages[imageUrl]);
+    hideViewerLoading();
+    preloadAdjacentImages();
+    return;
+  }
+
+  showViewerLoading('Loading 360 image...');
+
+  const img = new Image();
+  img.crossOrigin = 'Anonymous';
+
+  img.onload = function() {
+    preloadedImages[imageUrl] = img;
+    hideViewerLoading();
+    applyImageToSphere(img);
+    preloadAdjacentImages();
+  };
+
+  img.onerror = function() {
+    hideViewerLoading();
+    console.error('Failed to load image:', imageUrl);
+  };
+
+  if (imageUrl.startsWith('blob:')) {
+    img.src = imageUrl;
+  } else {
+    img.src = imageUrl + (imageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+  }
+}
+
+/* ========================
+   IMAGE PRELOADING
+======================== */
+function preloadAdjacentImages() {
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(p => p.index === currentIdx);
+  if (curPos < 0) return;
+
+  // Preload next and previous
+  [-1, 1, -2, 2].forEach(offset => {
+    const idx = curPos + offset;
+    if (idx >= 0 && idx < pts.length) {
+      const imgUrl = imagesByIndex[pts[idx].index];
+      if (imgUrl && !preloadedImages[imgUrl]) {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => { preloadedImages[imgUrl] = img; };
+        img.onerror = () => {};
+        img.src = imgUrl.startsWith('blob:') ? imgUrl : imgUrl + '?t=' + Date.now();
+      }
+    }
+  });
+}
+
+/* ========================
+   VIEWER LOADING STATES
+======================== */
+function showViewerLoading(msg) {
+  const el = document.getElementById('viewer-loading');
+  const txt = document.getElementById('loading-text');
+  if (el && txt) { txt.textContent = msg; el.style.display = 'block'; }
+}
+
+function hideViewerLoading() {
+  const el = document.getElementById('viewer-loading');
+  if (el) el.style.display = 'none';
+}
+
+/* ========================
+   VIEWER EVENT LISTENERS
+======================== */
+function setupViewerEventListeners() {
+  const canvas = document.getElementById('canvas');
+
+  let isDragging = false;
+  let lastX = 0, lastY = 0;
+
+  // Mouse controls
+  canvas.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    disableNavButtons();
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (isDragging && sphere) {
+      const deltaX = e.clientX - lastX;
+      const deltaY = e.clientY - lastY;
+
+      sphere.rotation.y -= deltaX * 0.01;
+      sphere.rotation.x -= deltaY * 0.01;
+      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+
+      currentYaw = sphere.rotation.y;
+      currentPitch = sphere.rotation.x;
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      updateNavigationRing();
+      updateViewCone();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isDragging = false;
+    setTimeout(enableNavButtons, 50);
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('mouseenter', () => { canvas.style.cursor = 'grab'; });
+  canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'default'; });
+
+  // Wheel zoom
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const zoomSpeed = e.deltaMode === 0 ? 2 : 60;
+    const delta = e.deltaY > 0 ? zoomSpeed : -zoomSpeed;
+    const oldFov = currentFov;
+    currentFov = Math.max(30, Math.min(120, currentFov + delta));
+    if (currentFov !== oldFov) {
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  }, { passive: false });
+
+  // Touch controls
+  setupTouchGestures(canvas);
+
+  // Navigation buttons
+  document.getElementById('nextImageBtn').addEventListener('click', navigateForward);
+  document.getElementById('prevImageBtn').addEventListener('click', navigateBackward);
+
+  // Zoom buttons
+  document.getElementById('zoomInBtn').addEventListener('click', () => {
+    if (currentFov > 30) {
+      currentFov -= 5;
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  });
+  document.getElementById('zoomOutBtn').addEventListener('click', () => {
+    if (currentFov < 120) {
+      currentFov += 5;
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+      updateViewCone();
+    }
+  });
+}
+
+function setupTouchGestures(canvas) {
+  let touchStartDistance = 0;
+  let touchStartFov = currentFov;
+  let isTouching = false;
+  let lastTouchX = 0, lastTouchY = 0;
+
+  function getTouchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      isTouching = true;
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+      e.preventDefault();
+    } else if (e.touches.length === 2) {
+      touchStartDistance = getTouchDistance(e.touches);
+      touchStartFov = currentFov;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && isTouching && sphere) {
+      const deltaX = e.touches[0].clientX - lastTouchX;
+      const deltaY = e.touches[0].clientY - lastTouchY;
+
+      sphere.rotation.y -= deltaX * 0.01;
+      sphere.rotation.x -= deltaY * 0.01;
+      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+
+      currentYaw = sphere.rotation.y;
+      currentPitch = sphere.rotation.x;
+
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+
+      updateViewCone();
+      updateNavigationRing();
+      e.preventDefault();
+    } else if (e.touches.length === 2) {
+      const currentDistance = getTouchDistance(e.touches);
+      const scale = touchStartDistance / currentDistance;
+      const newFov = Math.max(30, Math.min(120, touchStartFov * scale));
+      if (newFov !== currentFov) {
+        currentFov = newFov;
+        camera.fov = currentFov;
+        camera.updateProjectionMatrix();
+        updateViewCone();
+      }
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+      isTouching = false;
+      touchStartDistance = 0;
+    } else if (e.touches.length === 1) {
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+    }
+  }, { passive: false });
+}
+
+function disableNavButtons() {
+  document.querySelectorAll('.nav-button.ring-button').forEach(b => { b.style.pointerEvents = 'none'; });
+}
+
+function enableNavButtons() {
+  document.querySelectorAll('.nav-button.ring-button').forEach(b => { b.style.pointerEvents = 'auto'; });
+}
+
+/* ========================
+   VIEW CONE ON MAP
+======================== */
+let lastPathBearing = 0;
+
+function initConeSystem() {
+  if (!map.getSource('view-cone')) {
+    map.addSource('view-cone', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] } }
+    });
+
+    map.addLayer({
+      id: 'view-cone-fill', type: 'fill', source: 'view-cone',
+      paint: { 'fill-color': '#ff8400', 'fill-opacity': 0.5 }
+    });
+
+    map.addLayer({
+      id: 'view-cone-outline', type: 'line', source: 'view-cone',
+      paint: { 'line-color': '#ff6b6b', 'line-width': 2, 'line-opacity': 0 }
+    });
+  }
+}
+
+function getHorizontalFovDeg() {
+  if (!camera) return 90;
+  const vRad = THREE.MathUtils.degToRad(currentFov);
+  const hRad = 2 * Math.atan(Math.tan(vRad / 2) * camera.aspect);
+  return THREE.MathUtils.radToDeg(hRad);
+}
+
+function makeViewConeRing(lat, lon, headingDeg, fovDeg, radiusMeters, steps) {
+  radiusMeters = radiusMeters || 15;
+  steps = steps || 24;
+  const half = Math.max(0, Math.min(89, fovDeg / 2));
+  const start = headingDeg - half;
+  const end = headingDeg + half;
+
+  const ring = [[lon, lat]];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const brg = start + (end - start) * t;
+    ring.push(destFromBearingDistance(lat, lon, brg, radiusMeters));
+  }
+  ring.push([lon, lat]);
+  return ring;
+}
+
+function updateViewCone() {
+  if (!map || !map.getSource('view-cone')) return;
+
+  const pos = getCurrentPointPosition();
+  if (!pos) return;
+
+  // Compute path bearing from current to next point
+  const nextPos = getNextPointPosition();
+  const prevPos = getPrevPointPosition();
+  let pathBearing = lastPathBearing;
+
+  if (nextPos) {
+    pathBearing = bearingDeg(pos, nextPos);
+  } else if (prevPos) {
+    pathBearing = bearingDeg(prevPos, pos);
+  }
+
+  // Smooth bearing changes
+  if (lastPathBearing !== undefined) {
+    let diff = pathBearing - lastPathBearing;
+    if (Math.abs(diff) > 180) {
+      pathBearing += diff > 0 ? -360 : 360;
+    }
+  }
+  lastPathBearing = pathBearing;
+
+  // Combine path bearing with user yaw
+  const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
+  const finalHeading = (pathBearing + userYawDeg + 360) % 360;
+
+  const fovH = getHorizontalFovDeg();
+  const ring = makeViewConeRing(pos[1], pos[0], finalHeading, fovH, 15, 24);
+
+  map.getSource('view-cone').setData({
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [ring] }
+  });
+}
+
+function hideViewCone() {
+  if (map && map.getSource('view-cone')) {
+    map.getSource('view-cone').setData({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] }
+    });
+  }
+}
+
+// Update cone when map moves/zooms
+map.on('zoom', () => { if (currentIdx >= 0) updateViewCone(); });
+map.on('move', () => { if (currentIdx >= 0) updateViewCone(); });
+
+/* ========================
+   VIEWER & NAVIGATION
+======================== */
+function openViewer(id) {
+  const p = rawPoints.find(rp => rp.index === id);
+  if (!p) return;
+
+  currentIdx = id;
+
+  document.getElementById('empty-msg').style.display = 'none';
+
+  // Load image via Three.js
+  if (imagesByIndex[id]) {
+    loadImageToViewer(imagesByIndex[id]);
+  } else {
+    // No image for this point - show empty sphere or message
+    if (!viewerInitialized) initThreeJSViewer();
+  }
+
+  // Update counter
+  const pts = getActivePoints();
+  const curPos = pts.findIndex(pt => pt.index === id);
+  document.getElementById('time').textContent = curPos >= 0
+    ? `${curPos + 1}/${pts.length}`
+    : `-/-`;
+
+  // Highlight dots
+  document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.red-dot').forEach(el => el.classList.remove('active'));
+
+  const activeBlueMarker = blueMarkers.find(m => m.getElement().innerText == id);
+  if (activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
+
+  const activeRedMarker = redMarkers.find(m => m.data.imageIndex == id);
+  if (activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
+
+  map.easeTo({ center: [p.lon, p.lat] });
+  document.getElementById('viewer-title').innerText = `Point ${id}`;
+
+  // Update view cone
+  updateViewCone();
+}
+
+function fitToTrack() {
+  if(!rawPoints.length) return;
+  const b = new mapboxgl.LngLatBounds();
+  rawPoints.forEach(p => b.extend([p.lon, p.lat]));
+  map.fitBounds(b, { padding: 50 });
+}
+
+/* ========================
+   BUTTON LISTENERS
+======================== */
+document.getElementById('generateRedBtn').onclick = generateRedTrack;
+document.getElementById('projectPointsBtn').onclick = projectPointsToRed;
+document.getElementById('fitBtn').onclick = fitToTrack;
+
+document.getElementById('exportBtn').onclick = () => {
+  const exportData = {
+    rawPoints: rawPoints.map(p => ({
+      index: p.index,
+      lat: p.lat,
+      lon: p.lon,
+      imageUrl: imagesByIndex[p.index]
+    })),
+    controlPoints: controlPointMarkers.map(m => {
+      const ll = m.getLngLat();
+      return { lon: ll.lng, lat: ll.lat };
+    }),
+    redMarkers: redMarkers.map(m => ({
+      sequentialIndex: m.data.sequentialIndex,
+      originalImageIndex: m.data.imageIndex,
+      lat: m.data.lat,
+      lon: m.data.lon
+    }))
+  };
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'smoothed_path_with_images.json';
+  a.click();
+};
+
+document.getElementById('exportGpxBtn').onclick = () => {
+  if (!redTrackLine || redMarkers.length === 0) return;
+
+  const curveCoords = redTrackLine.geometry.coordinates;
+
+  let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  gpx += '<gpx version="1.1" creator="Quickview Editor" xmlns="http://www.topografix.com/GPX/1/1">\n';
+  gpx += '  <trk>\n';
+  gpx += '    <name>smoothed_track</name>\n';
+  gpx += '    <trkseg>\n';
+
+  curveCoords.forEach(coord => {
+    gpx += `      <trkpt lat="${coord[1]}" lon="${coord[0]}"></trkpt>\n`;
+  });
+
+  gpx += '    </trkseg>\n';
+  gpx += '  </trk>\n';
+
+  redMarkers.forEach((m, idx) => {
+    const imageIndex = m.data.imageIndex;
+    const photoNum = idx + 1;
+    gpx += `  <wpt lat="${m.data.lat}" lon="${m.data.lon}">\n`;
+    gpx += `    <name>Photo_${photoNum} - Image ${imageIndex}</name>\n`;
+    gpx += `    <desc>Marble position along route - Image ${imageIndex}</desc>\n`;
+    gpx += `  </wpt>\n`;
+  });
+
+  gpx += '</gpx>';
+
+  const blob = new Blob([gpx], {type: 'application/gpx+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'smoothed_track.gpx';
+  a.click();
+};
+
+document.getElementById('jsonInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if(f) processRawPoints(JSON.parse(await f.text()).points);
+};
+
+/* ========================
+   GPX CREATION HANDLERS
+======================== */
+document.getElementById('gpxInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+
+  const gpxText = await f.text();
+  loadedGpxTrack = parseGpxFile(gpxText);
+
+  if (loadedGpxTrack) {
+    document.getElementById('generateFromGpxBtn').disabled = false;
+    const trackLength = turf.length(loadedGpxTrack);
+    console.log(`GPX loaded: ${loadedGpxTrack.geometry.coordinates.length} track points, ${trackLength.toFixed(2)} km`);
+  } else {
+    document.getElementById('generateFromGpxBtn').disabled = true;
+  }
+};
+
+document.getElementById('generateFromGpxBtn').onclick = () => {
+  if (!loadedGpxTrack) return;
+
+  if (rawPoints.length > 0 || blueMarkers.length > 0) {
+    if (!confirm('This will clear existing data. Continue?')) {
+      return;
+    }
+    clearAll();
+  }
+
+  const numPoints = parseInt(document.getElementById('numPointsInput').value) || 10;
+  if (numPoints < 2) {
+    alert('Minimum 2 points required');
+    return;
+  }
+
+  const generatedPoints = generatePointsFromGpx(loadedGpxTrack, numPoints);
+
+  if (generatedPoints.length > 0) {
+    processRawPoints(generatedPoints);
+    document.getElementById('exportCreatedJsonBtn').disabled = false;
+    console.log(`Generated ${generatedPoints.length} points from GPX`);
+  }
+};
+
+document.getElementById('exportCreatedJsonBtn').onclick = () => {
+  if (rawPoints.length === 0) return;
+
+  const exportData = {
+    points: rawPoints.map(p => ({
+      index: p.index,
+      lat: p.lat,
+      lon: p.lon
+    }))
+  };
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'blue_points.json';
+  a.click();
+};
+
+document.getElementById('imagesInput').onchange = (ev) => {
+  let loadedCount = 0;
+  Array.from(ev.target.files).forEach(f => {
+    if (f.name.startsWith('.')) return;
+    if (!/\.(jpg|jpeg|png)$/i.test(f.name)) return;
+
+    const m = f.name.match(/(\d+)\.[^.]+$/);
+    if (m) {
+      imagesByIndex[parseInt(m[1])] = URL.createObjectURL(f);
+      loadedCount++;
+    }
+  });
+  console.log(`Loaded ${loadedCount} images`);
+  updateMarkerColors();
+
+  // If already viewing a point, reload its image
+  if (currentIdx >= 0 && imagesByIndex[currentIdx]) {
+    loadImageToViewer(imagesByIndex[currentIdx]);
+  }
+};
+
+function updateMarkerColors() {
+  blueMarkers.forEach((marker, idx) => {
+    const p = rawPoints[idx];
+    const el = marker.getElement();
+    el.style.backgroundColor = imagesByIndex[p.index] ? '#26a269' : '#2b6df6';
+  });
+
+  const imageCount = rawPoints.filter(p => imagesByIndex[p.index]).length;
+  document.getElementById('blueCount').innerText = `${blueMarkers.length} (${imageCount} imgs)`;
+}
+
+/* ========================
+   CLEAR ALL
+======================== */
+function clearAll() {
+  rawPoints = [];
+  imagesByIndex = {};
+  currentIdx = -1;
+
+  blueMarkers.forEach(m => m.remove());
+  blueMarkers = [];
+
+  redMarkers.forEach(item => item.marker.remove());
+  redMarkers = [];
+
+  controlPointMarkers.forEach(m => m.remove());
+  controlPointMarkers = [];
+  controlPoints = [];
+  redTrackLine = null;
+
+  if (map.getLayer('blue-track')) map.removeLayer('blue-track');
+  if (map.getSource('blue-track')) map.removeSource('blue-track');
+  if (map.getLayer('red-track')) map.removeLayer('red-track');
+  if (map.getSource('red-track')) map.removeSource('red-track');
+
+  // Clean up Three.js
+  if (sphere) {
+    panoGroup.remove(sphere);
+    if (sphere.geometry) sphere.geometry.dispose();
+    if (sphere.material) {
+      if (sphere.material.map) sphere.material.map.dispose();
+      sphere.material.dispose();
+    }
+    sphere = null;
+  }
+  currentYaw = 0;
+  currentPitch = 0;
+  currentFov = 75;
+  preloadedImages = {};
+
+  document.getElementById('empty-msg').style.display = 'flex';
+  document.getElementById('empty-msg').textContent = 'Load data to begin';
+  document.getElementById('viewer-title').textContent = 'Street View';
+  document.getElementById('viewer-meta').textContent = '';
+  document.getElementById('time').textContent = '-/-';
+
+  document.getElementById('projectPointsBtn').disabled = true;
+  document.getElementById('exportBtn').disabled = true;
+  document.getElementById('exportGpxBtn').disabled = true;
+  document.getElementById('dragMode').disabled = true;
+  document.getElementById('exportCreatedJsonBtn').disabled = true;
+
+  addCPModeActive = false;
+  removeCPModeActive = false;
+  dragModeActive = false;
+  removePointModeActive = false;
+  document.getElementById('addCPMode').checked = false;
+  document.getElementById('removeCPMode').checked = false;
+  document.getElementById('dragMode').checked = false;
+  document.getElementById('removePointMode').checked = false;
+
+  hideViewCone();
+  updateStatus();
+}
+
+document.getElementById('clearAllBtn').onclick = clearAll;
+
+/* ========================
+   IMPORT FULL SESSION
+======================== */
+document.getElementById('importRedInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+
+  const data = JSON.parse(await f.text());
+
+  clearAll();
+
+  if (data.rawPoints && data.rawPoints.length > 0) {
+    data.rawPoints.forEach(p => {
+      if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
+        imagesByIndex[p.index] = p.imageUrl;
+      }
+    });
+
+    processRawPoints(data.rawPoints);
+  }
+
+  if (data.controlPoints && data.controlPoints.length > 0) {
+    data.controlPoints.forEach(cp => {
+      createCPMarker([cp.lon, cp.lat]);
+    });
+    updateRedTrackLine();
+    document.getElementById('showRedTrack').checked = true;
+    document.getElementById('projectPointsBtn').disabled = false;
+  }
+
+  if (data.redMarkers && data.redMarkers.length > 0) {
+    data.redMarkers.forEach(p => {
+      createRedMarker(
+        [p.lon, p.lat],
+        p.sequentialIndex,
+        p.originalImageIndex
+      );
+    });
+
+    document.getElementById('showRedDots').checked = true;
+    document.getElementById('dragMode').disabled = false;
+    document.getElementById('exportBtn').disabled = false;
+    document.getElementById('exportGpxBtn').disabled = false;
+  }
+
+  updateStatus();
+};
+
+/* ========================
+   INIT CONE ON MAP LOAD
+======================== */
+map.on('load', () => {
+  initConeSystem();
+});
+
+// Ready
+</script>
+</body>
+</html>
