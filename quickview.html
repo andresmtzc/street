@@ -269,6 +269,14 @@
       </div>
 
       <div class="panel-section">
+        <div class="section-title">Yaw Fix</div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <input type="range" id="yawFixSlider" min="-180" max="180" step="5" value="0" style="flex:1; accent-color:#1fb6ff;">
+          <span id="yawFixValue" style="font-size:11px; color:#1fb6ff; font-weight:600; min-width:36px; text-align:right;">0°</span>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="section-title">Smoothing</div>
         <button class="btn" id="generateRedBtn">Generate Red Track</button>
         <div style="margin-top: 8px;">
@@ -445,6 +453,7 @@ function createTrackData(name) {
     controlPointMarkers: [],  // DOM markers (need dragging)
     controlPoints: [],
     redTrackLine: null,
+    yawFix: 0,
   };
 }
 
@@ -1031,6 +1040,13 @@ function selectTrack(trackId) {
   document.getElementById('generateFromGpxBtn').disabled = !track.gpxLine;
   document.getElementById('exportCreatedJsonBtn').disabled = track.rawPoints.length === 0;
 
+  // Sync yaw fix slider to this track
+  document.getElementById('yawFixSlider').value = track.yawFix || 0;
+  document.getElementById('yawFixValue').textContent = `${track.yawFix || 0}°`;
+  if (panoGroup) {
+    panoGroup.rotation.y = THREE.MathUtils.degToRad(track.yawFix || 0);
+  }
+
   // Reset modes
   dragModeActive = false;
   removePointModeActive = false;
@@ -1443,6 +1459,19 @@ document.getElementById('showRedTrack').onchange = (e) => {
   }
 };
 document.getElementById('showControlPoints').onchange = updateControlsVisibility;
+
+// YAW FIX SLIDER
+document.getElementById('yawFixSlider').oninput = (e) => {
+  const deg = parseInt(e.target.value);
+  document.getElementById('yawFixValue').textContent = `${deg}°`;
+  const track = getCurrentTrack();
+  if (track) {
+    track.yawFix = deg;
+  }
+  if (panoGroup) {
+    panoGroup.rotation.y = THREE.MathUtils.degToRad(deg);
+  }
+};
 
 // MODES
 document.getElementById('addCPMode').onchange = (e) => {
@@ -2094,6 +2123,7 @@ document.getElementById('exportBtn').onclick = () => {
   if (!track) return;
 
   const exportData = {
+    yawFix: track.yawFix || 0,
     rawPoints: track.rawPoints.map(p => ({
       index: p.index,
       lat: p.lat,
@@ -2397,6 +2427,7 @@ document.getElementById('importRedInput').onchange = async (e) => {
     const data = JSON.parse(await f.text());
     const name = f.name.replace(/\.json$/i, '');
     const track = createTrackData(name);
+    if (data.yawFix !== undefined) track.yawFix = data.yawFix;
 
     if (data.rawPoints && data.rawPoints.length > 0) {
       data.rawPoints.forEach(p => {
