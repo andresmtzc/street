@@ -367,6 +367,22 @@
         <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
       </div>
     </div>
+
+    <div class="panel-section">
+      <div class="section-title">Map Layer</div>
+      <input type="text" id="overlayUrl" placeholder="Image URL" style="width:100%; font-size:10px; padding:4px 6px; background:#111; border:1px solid #333; color:#ccc; border-radius:3px; font-family:'JetBrains Mono',monospace; margin-bottom:4px;">
+      <input type="text" id="overlayCoords" placeholder="[lng,lat],[lng,lat],[lng,lat],[lng,lat]" style="width:100%; font-size:10px; padding:4px 6px; background:#111; border:1px solid #333; color:#ccc; border-radius:3px; font-family:'JetBrains Mono',monospace; margin-bottom:6px;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button class="btn" id="loadOverlayBtn" style="margin:0; flex:1; font-size:10px; padding:4px;">Load</button>
+        <button class="btn" id="removeOverlayBtn" style="margin:0; font-size:10px; padding:4px; background:linear-gradient(135deg,#666 0%,#444 100%); display:none;">Remove</button>
+      </div>
+      <div id="overlayControls" style="display:none; margin-top:6px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="font-size:9px; color:#666; min-width:40px;">Opacity</span>
+          <input type="range" id="overlayOpacity" min="0" max="100" value="80" style="flex:1; accent-color:#1fb6ff;">
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="map-section">
@@ -2789,6 +2805,47 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     redo();
   }
+});
+
+// --- Map Layer Overlay ---
+document.getElementById('loadOverlayBtn').addEventListener('click', function() {
+  const url = document.getElementById('overlayUrl').value.trim();
+  const rawCoords = document.getElementById('overlayCoords').value.trim();
+  if (!url || !rawCoords) return;
+
+  // Parse coordinates: accept [lng,lat],[lng,lat],... format
+  const nums = rawCoords.match(/-?\d+\.?\d*/g);
+  if (!nums || nums.length < 8) { alert('Need 4 coordinate pairs [lng,lat]'); return; }
+  const coordinates = [
+    [parseFloat(nums[0]), parseFloat(nums[1])],
+    [parseFloat(nums[2]), parseFloat(nums[3])],
+    [parseFloat(nums[4]), parseFloat(nums[5])],
+    [parseFloat(nums[6]), parseFloat(nums[7])]
+  ];
+
+  // Remove existing overlay if any
+  if (map.getLayer('drone-overlay-layer')) map.removeLayer('drone-overlay-layer');
+  if (map.getSource('drone-overlay')) map.removeSource('drone-overlay');
+
+  map.addSource('drone-overlay', { type: 'image', url: url, coordinates: coordinates });
+  map.addLayer({ id: 'drone-overlay-layer', type: 'raster', source: 'drone-overlay', paint: { 'raster-opacity': 0.8 } });
+
+  document.getElementById('overlayControls').style.display = 'block';
+  document.getElementById('removeOverlayBtn').style.display = '';
+  document.getElementById('overlayOpacity').value = 80;
+});
+
+document.getElementById('overlayOpacity').addEventListener('input', function() {
+  if (map.getLayer('drone-overlay-layer')) {
+    map.setPaintProperty('drone-overlay-layer', 'raster-opacity', this.value / 100);
+  }
+});
+
+document.getElementById('removeOverlayBtn').addEventListener('click', function() {
+  if (map.getLayer('drone-overlay-layer')) map.removeLayer('drone-overlay-layer');
+  if (map.getSource('drone-overlay')) map.removeSource('drone-overlay');
+  document.getElementById('overlayControls').style.display = 'none';
+  this.style.display = 'none';
 });
 
 // Ready
