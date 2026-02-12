@@ -601,13 +601,10 @@ function redistributeMarbles(track, dragIdx) {
   if (!track || !track.redTrackLine) return;
 
   const markers = track.redMarkers;
-  const totalLen = turf.length(track.redTrackLine);
-  if (totalLen === 0) return;
+  if (markers.length < 3) return;
 
-  // Compute distanceAlongRoute for the dragged marker
-  const dragPt = turf.point([markers[dragIdx].lon, markers[dragIdx].lat]);
-  const snapped = turf.nearestPointOnLine(track.redTrackLine, dragPt);
-  markers[dragIdx].distanceAlongRoute = snapped.properties.location;
+  // distanceAlongRoute for the dragged marker is already set by the drag handler.
+  // Do NOT re-snap here — nearestPointOnLine can jump to wrong segment on curves.
 
   // Find previous locked boundary (or start)
   let prevBound = 0;
@@ -910,20 +907,32 @@ function setupMarkerEvents() {
 
     saveUndoState(track, 'drag red dot');
 
-    // Find boundary distances for constraining drag
+    // Bootstrap: ensure all markers have valid distanceAlongRoute
     const totalLen = turf.length(track.redTrackLine);
+    const needsBootstrap = track.redMarkers.some((m, i) =>
+      i > 0 && (!m.distanceAlongRoute && m.distanceAlongRoute !== 0)
+    );
+    if (needsBootstrap || track.redMarkers.every((m, i) => i > 0 && m.distanceAlongRoute === 0)) {
+      track.redMarkers.forEach(m => {
+        const pt = turf.point([m.lon, m.lat]);
+        const snap = turf.nearestPointOnLine(track.redTrackLine, pt);
+        m.distanceAlongRoute = snap.properties.location;
+      });
+    }
+
+    // Find boundary distances for constraining drag
     let prevBoundDist = 0;
     let nextBoundDist = totalLen;
 
     for (let i = seqIdx - 1; i >= 0; i--) {
       if (track.redMarkers[i].isLocked) {
-        prevBoundDist = track.redMarkers[i].distanceAlongRoute || 0;
+        prevBoundDist = track.redMarkers[i].distanceAlongRoute;
         break;
       }
     }
     for (let i = seqIdx + 1; i < track.redMarkers.length; i++) {
       if (track.redMarkers[i].isLocked) {
-        nextBoundDist = track.redMarkers[i].distanceAlongRoute || totalLen;
+        nextBoundDist = track.redMarkers[i].distanceAlongRoute;
         break;
       }
     }
