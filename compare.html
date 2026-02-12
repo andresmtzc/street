@@ -238,7 +238,7 @@ document.getElementById('folder-input').addEventListener('change', (e) => {
 
 function initPairs(files) {
     // Filter to jpg/jpeg only
-    const jpgs = files.filter(f => /\.jpe?g$/i.test(f.name));
+    const jpgs = files.filter(f => /\.jpe?g$/i.test(f.name) && !f.name.startsWith('._'));
 
     if (!jpgs.length) {
         alert('No JPEG images found in this folder.');
