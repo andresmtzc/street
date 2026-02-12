@@ -61,43 +61,7 @@
     .btn:disabled { background: #2a2a2a; color: #666; cursor: not-allowed; transform: none; }
     .btn-danger { background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); }
 
-    /* MARKERS */
-    .custom-marker {
-      width: 16px; height: 16px; border-radius: 50%;
-      border: 1.5px solid white; cursor: pointer; transition: 0.2s;
-      display: flex; justify-content: center; align-items: center;
-      font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700;
-      color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-      z-index: 5;
-    }
-
-    /* Blue Dots (Original) */
-    .blue-dot { background-color: #2b6df6; }
-    .blue-dot.active {
-      background-color: #00ffff !important;
-      border-color: #000;
-      transform: scale(1.5);
-      z-index: 20;
-      box-shadow: 0 0 12px #00ffff;
-    }
-    .blue-dot:hover { z-index: 15; transform: scale(1.2); }
-
-    /* Red Dots (Projected) */
-    .red-dot { background-color: #ff4444; border-color: #fff; z-index: 10; }
-    .red-dot.active {
-      background-color: #00ffff !important;
-      border-color: #000;
-      transform: scale(1.5);
-      z-index: 20;
-      box-shadow: 0 0 12px #00ffff;
-    }
-    .red-dot:hover { z-index: 15; transform: scale(1.2); }
-
-    /* Delete Cursor */
-    .delete-cursor { cursor: not-allowed !important; }
-    .delete-cursor:hover { transform: scale(0.9); opacity: 0.8; }
-
-    /* Control Point Markers */
+    /* Control Point Markers (still DOM-based) */
     .control-point-marker {
       width: 14px; height: 14px; background: #ffeb3b;
       border: 2px solid #000; transform: rotate(45deg);
@@ -466,10 +430,9 @@ function createTrackData(name) {
     color: trackColors[(nextTrackId - 2) % trackColors.length],
     gpxLine: null,
     rawPoints: [],
-    blueMarkers: [],
     imagesByIndex: {},
-    redMarkers: [],
-    controlPointMarkers: [],
+    redMarkers: [],           // Array of { lon, lat, sequentialIndex, imageIndex }
+    controlPointMarkers: [],  // DOM markers (need dragging)
     controlPoints: [],
     redTrackLine: null,
   };
@@ -487,14 +450,270 @@ function findTrackByName(name) {
   return null;
 }
 
+/* ========================
+   CIRCLE LAYER SOURCES
+======================== */
+function updateBlueMarkersSource() {
+  if (!map.getSource('blue-markers')) return;
+
+  const features = [];
+  tracks.forEach((track) => {
+    track.rawPoints.forEach((p) => {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+        properties: {
+          trackId: track.id,
+          trackColor: track.color,
+          index: p.index,
+          hasImage: !!track.imagesByIndex[p.index],
+          isActive: (track.id === currentTrackId && p.index === currentIdx)
+        }
+      });
+    });
+  });
+
+  map.getSource('blue-markers').setData({
+    type: 'FeatureCollection',
+    features: features
+  });
+}
+
+function updateRedMarkersSource() {
+  if (!map.getSource('red-markers')) return;
+
+  const ct = getCurrentTrack();
+  const features = [];
+
+  if (ct) {
+    ct.redMarkers.forEach((m) => {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
+        properties: {
+          trackId: ct.id,
+          sequentialIndex: m.sequentialIndex,
+          imageIndex: m.imageIndex,
+          isActive: (m.imageIndex === currentIdx)
+        }
+      });
+    });
+  }
+
+  map.getSource('red-markers').setData({
+    type: 'FeatureCollection',
+    features: features
+  });
+}
+
+/* ========================
+   INIT MARKER LAYERS
+======================== */
+function initMarkerLayers() {
+  // === BLUE MARKERS ===
+  map.addSource('blue-markers', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }
+  });
+
+  map.addLayer({
+    id: 'blue-markers-layer',
+    type: 'circle',
+    source: 'blue-markers',
+    paint: {
+      'circle-radius': ['case',
+        ['==', ['get', 'isActive'], true], 9,
+        6
+      ],
+      'circle-color': ['case',
+        ['==', ['get', 'isActive'], true], '#00ffff',
+        ['==', ['get', 'hasImage'], true], '#26a269',
+        ['get', 'trackColor']
+      ],
+      'circle-stroke-width': ['case',
+        ['==', ['get', 'isActive'], true], 2,
+        1.5
+      ],
+      'circle-stroke-color': ['case',
+        ['==', ['get', 'isActive'], true], '#000000',
+        '#ffffff'
+      ]
+    }
+  });
+
+  map.addLayer({
+    id: 'blue-markers-labels',
+    type: 'symbol',
+    source: 'blue-markers',
+    layout: {
+      'text-field': ['to-string', ['get', 'index']],
+      'text-size': 9,
+      'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+      'text-allow-overlap': true,
+      'text-ignore-placement': true
+    },
+    paint: {
+      'text-color': '#ffffff',
+      'text-halo-color': 'rgba(0,0,0,0.8)',
+      'text-halo-width': 1
+    }
+  });
+
+  map.addLayer({
+    id: 'blue-markers-click',
+    type: 'circle',
+    source: 'blue-markers',
+    paint: {
+      'circle-radius': 14,
+      'circle-opacity': 0
+    }
+  });
+
+  // === RED MARKERS ===
+  map.addSource('red-markers', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }
+  });
+
+  map.addLayer({
+    id: 'red-markers-layer',
+    type: 'circle',
+    source: 'red-markers',
+    paint: {
+      'circle-radius': ['case',
+        ['==', ['get', 'isActive'], true], 9,
+        6
+      ],
+      'circle-color': ['case',
+        ['==', ['get', 'isActive'], true], '#00ffff',
+        '#ff4444'
+      ],
+      'circle-stroke-width': ['case',
+        ['==', ['get', 'isActive'], true], 2,
+        1.5
+      ],
+      'circle-stroke-color': ['case',
+        ['==', ['get', 'isActive'], true], '#000000',
+        '#ffffff'
+      ]
+    }
+  });
+
+  map.addLayer({
+    id: 'red-markers-labels',
+    type: 'symbol',
+    source: 'red-markers',
+    layout: {
+      'text-field': ['to-string', ['get', 'imageIndex']],
+      'text-size': 9,
+      'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+      'text-allow-overlap': true,
+      'text-ignore-placement': true
+    },
+    paint: {
+      'text-color': '#ffffff',
+      'text-halo-color': 'rgba(0,0,0,0.8)',
+      'text-halo-width': 1
+    }
+  });
+
+  map.addLayer({
+    id: 'red-markers-click',
+    type: 'circle',
+    source: 'red-markers',
+    paint: {
+      'circle-radius': 14,
+      'circle-opacity': 0
+    }
+  });
+}
+
+/* ========================
+   MARKER CLICK / DRAG / HOVER EVENTS
+======================== */
+function setupMarkerEvents() {
+  // --- Blue marker click ---
+  map.on('click', 'blue-markers-click', (e) => {
+    e.originalEvent.stopPropagation();
+    const f = e.features[0].properties;
+    if (currentTrackId !== f.trackId) selectTrack(f.trackId);
+    openViewer(f.index);
+  });
+
+  // --- Red marker click ---
+  map.on('click', 'red-markers-click', (e) => {
+    e.originalEvent.stopPropagation();
+    const f = e.features[0].properties;
+
+    if (removePointModeActive) {
+      deleteRedPoint(f.sequentialIndex);
+      return;
+    }
+    if (!dragModeActive) {
+      if (currentTrackId !== f.trackId) selectTrack(f.trackId);
+      openViewer(f.imageIndex);
+    }
+  });
+
+  // --- Hover cursors ---
+  map.on('mouseenter', 'blue-markers-click', () => {
+    if (!addCPModeActive) map.getCanvas().style.cursor = 'pointer';
+  });
+  map.on('mouseleave', 'blue-markers-click', () => {
+    if (!addCPModeActive && !dragModeActive) map.getCanvas().style.cursor = '';
+  });
+  map.on('mouseenter', 'red-markers-click', () => {
+    if (dragModeActive) map.getCanvas().style.cursor = 'move';
+    else if (removePointModeActive) map.getCanvas().style.cursor = 'not-allowed';
+    else map.getCanvas().style.cursor = 'pointer';
+  });
+  map.on('mouseleave', 'red-markers-click', () => {
+    if (!addCPModeActive && !dragModeActive) map.getCanvas().style.cursor = '';
+  });
+
+  // --- Red marker drag ---
+  map.on('mousedown', 'red-markers-click', (e) => {
+    if (!dragModeActive) return;
+    e.preventDefault();
+
+    const seqIdx = e.features[0].properties.sequentialIndex;
+    const track = getCurrentTrack();
+    if (!track || !track.redTrackLine) return;
+
+    map.getCanvas().style.cursor = 'grabbing';
+    map.dragPan.disable();
+
+    function onMove(ev) {
+      if (!track.redTrackLine || !track.redMarkers[seqIdx]) return;
+      const point = turf.point([ev.lngLat.lng, ev.lngLat.lat]);
+      const snapped = turf.nearestPointOnLine(track.redTrackLine, point);
+      track.redMarkers[seqIdx].lon = snapped.geometry.coordinates[0];
+      track.redMarkers[seqIdx].lat = snapped.geometry.coordinates[1];
+      updateRedMarkersSource();
+    }
+
+    function onUp() {
+      map.getCanvas().style.cursor = dragModeActive ? 'move' : '';
+      map.dragPan.enable();
+      map.off('mousemove', onMove);
+      map.off('mouseup', onUp);
+    }
+
+    map.on('mousemove', onMove);
+    map.on('mouseup', onUp);
+  });
+}
+
+/* ========================
+   TRACK SELECTION
+======================== */
 function selectTrack(trackId) {
   if (currentTrackId === trackId) return;
 
   const prevTrack = getCurrentTrack();
 
-  // Hide previous track's red markers and control points
+  // Hide previous track's control points and red track line
   if (prevTrack) {
-    prevTrack.redMarkers.forEach(m => m.marker.getElement().style.display = 'none');
     prevTrack.controlPointMarkers.forEach(m => m.getElement().style.display = 'none');
     if (map.getLayer(`red-track-${prevTrack.id}`)) {
       map.setLayoutProperty(`red-track-${prevTrack.id}`, 'visibility', 'none');
@@ -505,16 +724,18 @@ function selectTrack(trackId) {
   const track = getCurrentTrack();
   if (!track) return;
 
-  // Show current track's red markers and control points
-  const showRed = document.getElementById('showRedDots').checked;
+  // Show current track's control points
   const showCP = document.getElementById('showControlPoints').checked;
-  track.redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
   track.controlPointMarkers.forEach(m => m.getElement().style.display = showCP ? 'block' : 'none');
 
   if (map.getLayer(`red-track-${track.id}`)) {
     const showRedTrack = document.getElementById('showRedTrack').checked;
     map.setLayoutProperty(`red-track-${track.id}`, 'visibility', showRedTrack ? 'visible' : 'none');
   }
+
+  // Update marker sources (active state + red markers switch)
+  updateBlueMarkersSource();
+  updateRedMarkersSource();
 
   // Update button states
   document.getElementById('projectPointsBtn').disabled = !track.redTrackLine;
@@ -531,6 +752,7 @@ function selectTrack(trackId) {
 
   updateTracksList();
   updateStatus();
+  updateDotsVisibility();
 
   // Open first point of this track in viewer
   if (track.rawPoints.length > 0) {
@@ -542,15 +764,13 @@ function removeTrack(trackId) {
   const track = tracks.get(trackId);
   if (!track) return;
 
-  // Remove map layers
+  // Remove per-track map layers (track lines only)
   if (map.getLayer(`blue-track-${trackId}`)) map.removeLayer(`blue-track-${trackId}`);
   if (map.getSource(`blue-track-${trackId}`)) map.removeSource(`blue-track-${trackId}`);
   if (map.getLayer(`red-track-${trackId}`)) map.removeLayer(`red-track-${trackId}`);
   if (map.getSource(`red-track-${trackId}`)) map.removeSource(`red-track-${trackId}`);
 
-  // Remove markers
-  track.blueMarkers.forEach(m => m.remove());
-  track.redMarkers.forEach(m => m.marker.remove());
+  // Remove control point DOM markers
   track.controlPointMarkers.forEach(m => m.remove());
 
   // Revoke blob URLs
@@ -565,6 +785,8 @@ function removeTrack(trackId) {
     if (tracks.size > 0) {
       selectTrack(tracks.keys().next().value);
     } else {
+      updateBlueMarkersSource();
+      updateRedMarkersSource();
       updateTracksList();
       updateStatus();
       document.getElementById('empty-msg').style.display = 'flex';
@@ -575,6 +797,7 @@ function removeTrack(trackId) {
       currentIdx = -1;
     }
   } else {
+    updateBlueMarkersSource();
     updateTracksList();
     updateStatus();
   }
@@ -671,15 +894,12 @@ function generatePointsFromGpx(trackLine, numPoints) {
 function processRawPoints(track) {
   track.rawPoints.sort((a, b) => a.index - b.index);
 
-  // Clear existing blue markers for this track
-  track.blueMarkers.forEach(m => m.remove());
-  track.blueMarkers = [];
-
   // Remove old blue track layer
   if (map.getLayer(`blue-track-${track.id}`)) map.removeLayer(`blue-track-${track.id}`);
   if (map.getSource(`blue-track-${track.id}`)) map.removeSource(`blue-track-${track.id}`);
 
-  // Draw Blue Track line with track color
+  // Draw Blue Track line with track color (below marker layers)
+  const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
   map.addSource(`blue-track-${track.id}`, {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: track.rawPoints.map(p => [p.lon, p.lat]) } }
@@ -687,28 +907,11 @@ function processRawPoints(track) {
   map.addLayer({
     id: `blue-track-${track.id}`, type: 'line', source: `blue-track-${track.id}`,
     paint: { 'line-color': track.color, 'line-width': 3, 'line-opacity': 0.6 }
-  });
+  }, beforeLayer);
 
-  // Create Blue Dots
-  track.rawPoints.forEach((p) => {
-    const el = document.createElement('div');
-    el.className = 'custom-marker blue-dot';
-    el.innerText = p.index;
-    el.style.backgroundColor = track.color;
-    el.onclick = () => {
-      if (currentTrackId !== track.id) selectTrack(track.id);
-      openViewer(p.index);
-    };
-
-    const marker = new mapboxgl.Marker({ element: el })
-      .setLngLat([p.lon, p.lat])
-      .addTo(map);
-
-    track.blueMarkers.push(marker);
-  });
-
+  // Update shared blue markers source
+  updateBlueMarkersSource();
   updateDotsVisibility();
-  updateMarkerColors(track);
   updateStatus();
 }
 
@@ -787,6 +990,7 @@ function updateRedTrackLine(track) {
   if (map.getLayer(layerId)) map.removeLayer(layerId);
   if (map.getSource(sourceId)) map.removeSource(sourceId);
 
+  const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
   map.addSource(sourceId, {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
@@ -796,7 +1000,7 @@ function updateRedTrackLine(track) {
     id: layerId, type: 'line', source: sourceId,
     paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
     layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
-  });
+  }, beforeLayer);
 }
 
 /* ========================
@@ -806,7 +1010,6 @@ function projectPointsToRed(track) {
   if (!track) track = getCurrentTrack();
   if (!track || !track.redTrackLine) return;
 
-  track.redMarkers.forEach(item => item.marker.remove());
   track.redMarkers = [];
 
   const blueTrack = turf.lineString(track.rawPoints.map(p => [p.lon, p.lat]));
@@ -825,85 +1028,39 @@ function projectPointsToRed(track) {
     const pointOnRed = turf.along(track.redTrackLine, ratio * redLen);
     const coord = pointOnRed.geometry.coordinates;
 
-    createRedMarker(coord, idx, p.index, track);
+    track.redMarkers.push({
+      lon: coord[0],
+      lat: coord[1],
+      sequentialIndex: idx,
+      imageIndex: p.index
+    });
   });
+
+  updateRedMarkersSource();
 
   document.getElementById('showRedDots').checked = true;
   document.getElementById('dragMode').disabled = false;
   document.getElementById('exportBtn').disabled = false;
   document.getElementById('exportGpxBtn').disabled = false;
-  updateStatus();
-}
-
-function createRedMarker(coord, sequentialIndex, imageIndex, track) {
-  if (!track) track = getCurrentTrack();
-  if (!track) return;
-
-  const el = document.createElement('div');
-  el.className = 'custom-marker red-dot';
-  el.innerText = imageIndex;
-  el.title = `Sequence ${sequentialIndex}`;
-
-  const marker = new mapboxgl.Marker({ element: el, draggable: false })
-    .setLngLat(coord)
-    .addTo(map);
-
-  const markerObj = {
-    marker: marker,
-    data: {
-      lon: coord[0],
-      lat: coord[1],
-      sequentialIndex: sequentialIndex,
-      imageIndex: imageIndex,
-      associatedImage: track.imagesByIndex[imageIndex]
-    }
-  };
-
-  el.onclick = (e) => {
-    if (removePointModeActive) {
-      deleteRedPoint(markerObj, track);
-      return;
-    }
-    if (!dragModeActive && !removePointModeActive) {
-      if (currentTrackId !== track.id) selectTrack(track.id);
-      openViewer(imageIndex);
-    }
-  };
-
-  marker.on('dragstart', () => {
-    if (!dragModeActive) marker.setDraggable(false);
-  });
-
-  marker.on('drag', () => {
-    const ll = marker.getLngLat();
-    const point = turf.point([ll.lng, ll.lat]);
-    const snapped = turf.nearestPointOnLine(track.redTrackLine, point);
-    marker.setLngLat(snapped.geometry.coordinates);
-    markerObj.data.lon = snapped.geometry.coordinates[0];
-    markerObj.data.lat = snapped.geometry.coordinates[1];
-  });
-
-  track.redMarkers.push(markerObj);
   updateDotsVisibility();
+  updateStatus();
 }
 
 /* ========================
    DELETE & RE-INDEX RED DOTS
 ======================== */
-function deleteRedPoint(targetObj, track) {
-  if (!track) track = getCurrentTrack();
+function deleteRedPoint(sequentialIndex) {
+  const track = getCurrentTrack();
   if (!track) return;
 
-  targetObj.marker.remove();
-  const indexToRemove = track.redMarkers.indexOf(targetObj);
-  if (indexToRemove > -1) {
-    track.redMarkers.splice(indexToRemove, 1);
-  }
+  track.redMarkers.splice(sequentialIndex, 1);
 
-  track.redMarkers.forEach((item, newSeqIndex) => {
-    item.data.sequentialIndex = newSeqIndex;
+  // Re-index
+  track.redMarkers.forEach((m, idx) => {
+    m.sequentialIndex = idx;
   });
 
+  updateRedMarkersSource();
   updateStatus();
 }
 
@@ -914,16 +1071,16 @@ function updateDotsVisibility() {
   const showBlue = document.getElementById('showBlueDots').checked;
   const showRed = document.getElementById('showRedDots').checked;
 
-  // Blue dots for ALL tracks
-  tracks.forEach(track => {
-    track.blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
-  });
+  const blueVis = showBlue ? 'visible' : 'none';
+  const redVis = showRed ? 'visible' : 'none';
 
-  // Red dots only for current track
-  const ct = getCurrentTrack();
-  if (ct) {
-    ct.redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
-  }
+  if (map.getLayer('blue-markers-layer')) map.setLayoutProperty('blue-markers-layer', 'visibility', blueVis);
+  if (map.getLayer('blue-markers-labels')) map.setLayoutProperty('blue-markers-labels', 'visibility', blueVis);
+  if (map.getLayer('blue-markers-click')) map.setLayoutProperty('blue-markers-click', 'visibility', blueVis);
+
+  if (map.getLayer('red-markers-layer')) map.setLayoutProperty('red-markers-layer', 'visibility', redVis);
+  if (map.getLayer('red-markers-labels')) map.setLayoutProperty('red-markers-labels', 'visibility', redVis);
+  if (map.getLayer('red-markers-click')) map.setLayoutProperty('red-markers-click', 'visibility', redVis);
 }
 
 function updateControlsVisibility() {
@@ -944,26 +1101,17 @@ function updateStatus() {
   }
 
   const imgCount = ct.rawPoints.filter(p => ct.imagesByIndex[p.index]).length;
-  document.getElementById('blueCount').innerText = `${ct.blueMarkers.length} (${imgCount} imgs)`;
+  document.getElementById('blueCount').innerText = `${ct.rawPoints.length} (${imgCount} imgs)`;
   document.getElementById('projectedCount').innerText = ct.redMarkers.length;
 
   if (ct.redMarkers.length > 0) {
-    const firstImage = ct.redMarkers[0].data.imageIndex;
-    const lastImage = ct.redMarkers[ct.redMarkers.length - 1].data.imageIndex;
+    const firstImage = ct.redMarkers[0].imageIndex;
+    const lastImage = ct.redMarkers[ct.redMarkers.length - 1].imageIndex;
     document.getElementById('viewer-meta').textContent =
       `${ct.name} · ${firstImage} → ${lastImage} (${ct.redMarkers.length} pts)`;
   } else {
     document.getElementById('viewer-meta').textContent = ct.name;
   }
-}
-
-function updateMarkerColors(track) {
-  track.blueMarkers.forEach((marker, idx) => {
-    const p = track.rawPoints[idx];
-    if (!p) return;
-    const el = marker.getElement();
-    el.style.backgroundColor = track.imagesByIndex[p.index] ? '#26a269' : track.color;
-  });
 }
 
 document.getElementById('showBlueDots').onchange = updateDotsVisibility;
@@ -1000,33 +1148,11 @@ document.getElementById('removeCPMode').onchange = (e) => {
 document.getElementById('dragMode').onchange = (e) => {
   dragModeActive = e.target.checked;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
-
-  const ct = getCurrentTrack();
-  if (ct) {
-    ct.redMarkers.forEach(m => {
-      m.marker.setDraggable(dragModeActive);
-      m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
-    });
-  }
 };
 
 document.getElementById('removePointMode').onchange = (e) => {
   removePointModeActive = e.target.checked;
   dragModeActive = false; document.getElementById('dragMode').checked = false;
-
-  const ct = getCurrentTrack();
-  if (ct) {
-    ct.redMarkers.forEach(m => {
-      m.marker.setDraggable(false);
-      const el = m.marker.getElement();
-      if (removePointModeActive) {
-        el.classList.add('delete-cursor');
-      } else {
-        el.classList.remove('delete-cursor');
-        el.style.cursor = 'pointer';
-      }
-    });
-  }
 };
 
 /* ========================
@@ -1034,6 +1160,10 @@ document.getElementById('removePointMode').onchange = (e) => {
 ======================== */
 map.on('click', (e) => {
   if (addCPModeActive) {
+    // Don't add CP when clicking on a marker
+    const features = map.queryRenderedFeatures(e.point, { layers: ['blue-markers-click', 'red-markers-click'] });
+    if (features.length > 0) return;
+
     const ct = getCurrentTrack();
     if (ct && ct.redTrackLine) {
       const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
@@ -1082,9 +1212,9 @@ function getActivePoints() {
 
   if (track.redMarkers.length > 0) {
     return track.redMarkers.map(m => ({
-      index: m.data.imageIndex,
-      lon: m.data.lon,
-      lat: m.data.lat
+      index: m.imageIndex,
+      lon: m.lon,
+      lat: m.lat
     }));
   }
   return track.rawPoints;
@@ -1599,15 +1729,9 @@ function openViewer(id) {
     ? `${curPos + 1}/${pts.length}`
     : `-/-`;
 
-  // Highlight dots
-  document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.red-dot').forEach(el => el.classList.remove('active'));
-
-  const activeBlueMarker = track.blueMarkers.find(m => m.getElement().innerText == id);
-  if (activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
-
-  const activeRedMarker = track.redMarkers.find(m => m.data.imageIndex == id);
-  if (activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
+  // Update marker sources (for active state highlighting)
+  updateBlueMarkersSource();
+  updateRedMarkersSource();
 
   map.easeTo({ center: [p.lon, p.lat] });
   document.getElementById('viewer-title').innerText = `${track.name} · Point ${id}`;
@@ -1658,10 +1782,10 @@ document.getElementById('exportBtn').onclick = () => {
       return { lon: ll.lng, lat: ll.lat };
     }),
     redMarkers: track.redMarkers.map(m => ({
-      sequentialIndex: m.data.sequentialIndex,
-      originalImageIndex: m.data.imageIndex,
-      lat: m.data.lat,
-      lon: m.data.lon
+      sequentialIndex: m.sequentialIndex,
+      originalImageIndex: m.imageIndex,
+      lat: m.lat,
+      lon: m.lon
     }))
   };
 
@@ -1692,9 +1816,9 @@ document.getElementById('exportGpxBtn').onclick = () => {
   gpx += '  </trk>\n';
 
   track.redMarkers.forEach((m, idx) => {
-    gpx += `  <wpt lat="${m.data.lat}" lon="${m.data.lon}">\n`;
-    gpx += `    <name>Photo_${idx + 1} - Image ${m.data.imageIndex}</name>\n`;
-    gpx += `    <desc>Marble position along route - Image ${m.data.imageIndex}</desc>\n`;
+    gpx += `  <wpt lat="${m.lat}" lon="${m.lon}">\n`;
+    gpx += `    <name>Photo_${idx + 1} - Image ${m.imageIndex}</name>\n`;
+    gpx += `    <desc>Marble position along route - Image ${m.imageIndex}</desc>\n`;
     gpx += `  </wpt>\n`;
   });
 
@@ -1759,8 +1883,9 @@ document.getElementById('generateFromGpxBtn').onclick = () => {
   }
 
   // Clear existing editing state for this track
-  track.redMarkers.forEach(m => m.marker.remove());
   track.redMarkers = [];
+  updateRedMarkersSource();
+
   track.controlPointMarkers.forEach(m => m.remove());
   track.controlPointMarkers = [];
   track.controlPoints = [];
@@ -1828,7 +1953,6 @@ document.getElementById('imagesInput').onchange = (ev) => {
   if (files.length === 0) return;
 
   // Multi-track pattern: {trackname}{tracknum}-{imagenum}.ext
-  // e.g., senterra1-5.jpg → track "senterra1", image 5
   const trackPattern = /^(.+?)(\d+)-(\d+)\.[^.]+$/;
   let multiCount = 0;
   let singleCount = 0;
@@ -1846,7 +1970,7 @@ document.getElementById('imagesInput').onchange = (ev) => {
       }
     }
 
-    // Fallback: simple number → assign to current track
+    // Fallback: simple number -> assign to current track
     const simpleMatch = f.name.match(/(\d+)\.[^.]+$/);
     if (simpleMatch) {
       const ct = getCurrentTrack();
@@ -1859,8 +1983,8 @@ document.getElementById('imagesInput').onchange = (ev) => {
 
   console.log(`Loaded images: ${multiCount} multi-track, ${singleCount} single-track`);
 
-  // Update all track marker colors
-  tracks.forEach(track => updateMarkerColors(track));
+  // Update marker source to refresh hasImage property
+  updateBlueMarkersSource();
   updateTracksList();
   updateStatus();
 
@@ -1875,15 +1999,13 @@ document.getElementById('imagesInput').onchange = (ev) => {
    CLEAR ALL
 ======================== */
 function clearAll() {
-  // Remove all track map layers and markers
+  // Remove all track map layers and control point markers
   tracks.forEach((track, trackId) => {
     if (map.getLayer(`blue-track-${trackId}`)) map.removeLayer(`blue-track-${trackId}`);
     if (map.getSource(`blue-track-${trackId}`)) map.removeSource(`blue-track-${trackId}`);
     if (map.getLayer(`red-track-${trackId}`)) map.removeLayer(`red-track-${trackId}`);
     if (map.getSource(`red-track-${trackId}`)) map.removeSource(`red-track-${trackId}`);
 
-    track.blueMarkers.forEach(m => m.remove());
-    track.redMarkers.forEach(m => m.marker.remove());
     track.controlPointMarkers.forEach(m => m.remove());
 
     Object.values(track.imagesByIndex).forEach(url => {
@@ -1894,6 +2016,10 @@ function clearAll() {
   tracks.clear();
   currentTrackId = null;
   currentIdx = -1;
+
+  // Clear shared marker sources
+  updateBlueMarkersSource();
+  updateRedMarkersSource();
 
   // Clean up Three.js
   if (sphere) {
@@ -1974,13 +2100,15 @@ document.getElementById('importRedInput').onchange = async (e) => {
 
   if (data.redMarkers && data.redMarkers.length > 0) {
     data.redMarkers.forEach(p => {
-      createRedMarker(
-        [p.lon, p.lat],
-        p.sequentialIndex,
-        p.originalImageIndex,
-        track
-      );
+      track.redMarkers.push({
+        lon: p.lon,
+        lat: p.lat,
+        sequentialIndex: p.sequentialIndex,
+        imageIndex: p.originalImageIndex
+      });
     });
+
+    updateRedMarkersSource();
 
     document.getElementById('showRedDots').checked = true;
     document.getElementById('dragMode').disabled = false;
@@ -1993,10 +2121,12 @@ document.getElementById('importRedInput').onchange = async (e) => {
 };
 
 /* ========================
-   INIT CONE ON MAP LOAD
+   INIT ON MAP LOAD
 ======================== */
 map.on('load', () => {
   initConeSystem();
+  initMarkerLayers();
+  setupMarkerEvents();
 });
 
 // Ready
