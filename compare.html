@@ -162,6 +162,11 @@ body {
 }
 #filename { color: #aaa; font-size: 0.9rem; }
 #nav-hints { font-size: 0.7rem; color: #555; margin-top: 2px; }
+
+/* Overlay Screen */
+#overlay-screen { display: none; height: 100vh; flex-direction: column; }
+#overlay-screen.active { display: flex; }
+#overlay-canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
 </style>
 </head>
 <body>
@@ -175,6 +180,13 @@ body {
     </label>
     <button class="pick-btn" onclick="document.getElementById('folder-input').click()">Select Folder</button>
     <input type="file" id="folder-input" webkitdirectory multiple hidden>
+    <div style="margin-top:24px;border-top:1px solid #333;padding-top:20px;display:flex;align-items:center;gap:10px">
+        <span style="color:#888;font-size:0.95rem">Overlay every</span>
+        <input type="number" id="overlay-n" min="1" value="2" style="width:60px;padding:4px 8px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:1rem;text-align:center">
+        <span style="color:#888;font-size:0.95rem">images</span>
+        <button class="pick-btn" id="overlay-btn" style="padding:8px 20px;font-size:0.95rem" onclick="document.getElementById('overlay-folder-input').click()">Generate Overlay</button>
+        <input type="file" id="overlay-folder-input" webkitdirectory multiple hidden>
+    </div>
 </div>
 
 <div id="viewer-screen">
@@ -210,6 +222,19 @@ body {
     <div id="bottom-bar">
         <div id="filename"></div>
         <div id="nav-hints">← Previous &nbsp;|&nbsp; Space / → Next</div>
+    </div>
+</div>
+
+<div id="overlay-screen">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:#222;border-bottom:1px solid #333;flex-shrink:0">
+        <span id="overlay-info" style="color:#888;font-size:0.9rem"></span>
+        <div style="display:flex;gap:8px">
+            <button class="pick-btn" style="padding:8px 20px;font-size:0.9rem" onclick="downloadOverlay()">Download PNG</button>
+            <button class="pick-btn" style="padding:8px 20px;font-size:0.9rem" onclick="backFromOverlay()">Back</button>
+        </div>
+    </div>
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:8px;min-height:0;background:#1a1a1a">
+        <canvas id="overlay-canvas"></canvas>
     </div>
 </div>
 
@@ -527,6 +552,99 @@ function importJson(data) {
 
     render();
     alert(`Imported ${applied} selection(s) from JSON.`);
+}
+
+// --- Overlay ---
+let overlayFolderName = 'overlay';
+
+document.getElementById('overlay-folder-input').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+
+    const rel = files[0].webkitRelativePath || '';
+    if (rel) overlayFolderName = rel.split('/')[0];
+
+    const stride = parseInt(document.getElementById('overlay-n').value) || 2;
+    const allJpgs = files.filter(f => /\.jpe?g$/i.test(f.name) && !f.name.startsWith('._'))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+    if (!allJpgs.length) {
+        alert('No JPEG images found.');
+        return;
+    }
+
+    // Pick every Nth image (stride)
+    const jpgs = allJpgs.filter((_, i) => i % stride === 0);
+
+    const btn = document.getElementById('overlay-btn');
+    btn.textContent = 'Generating...';
+    btn.disabled = true;
+
+    // Small delay so the button text updates before we block
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+        const canvas = document.getElementById('overlay-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Load first image to set canvas dimensions
+        const firstImg = await loadImageFromFile(jpgs[0]);
+        canvas.width = firstImg.naturalWidth;
+        canvas.height = firstImg.naturalHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const alpha = 1 / jpgs.length;
+
+        // Draw each sampled image
+        for (let i = 0; i < jpgs.length; i++) {
+            const img = i === 0 ? firstImg : await loadImageFromFile(jpgs[i]);
+            ctx.globalAlpha = alpha;
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(img.src);
+        }
+        ctx.globalAlpha = 1;
+
+        document.getElementById('overlay-info').textContent =
+            `${jpgs.length} of ${allJpgs.length} images (every ${stride}), ${(alpha * 100).toFixed(1)}% opacity each — ${canvas.width}×${canvas.height}`;
+
+        document.getElementById('picker-screen').style.display = 'none';
+        document.getElementById('overlay-screen').classList.add('active');
+    } catch (err) {
+        alert('Overlay failed: ' + err.message);
+    }
+
+    btn.textContent = 'Generate Overlay';
+    btn.disabled = false;
+    e.target.value = '';
+});
+
+function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load ' + file.name)); };
+        img.src = url;
+    });
+}
+
+function downloadOverlay() {
+    const canvas = document.getElementById('overlay-canvas');
+    canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = overlayFolderName + '_overlay.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+}
+
+function backFromOverlay() {
+    document.getElementById('overlay-screen').classList.remove('active');
+    document.getElementById('picker-screen').style.display = '';
 }
 
 // --- Export ---
