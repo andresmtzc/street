@@ -340,10 +340,6 @@
         <button id="exportCreatedJsonBtn" disabled style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Export JSON</button>
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
-        <label style="font-size:10px; font-weight:bold; color:#1fb6ff;">LOAD BLUE POINTS</label>
-        <input id="jsonInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:4px;">
         <label style="font-size:10px; font-weight:bold; color:#ff4444;">IMPORT RED PATH</label>
         <input id="importRedInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
       </div>
@@ -2254,23 +2250,6 @@ document.getElementById('exportCreatedJsonBtn').onclick = () => {
 /* ========================
    JSON LOAD (creates new track)
 ======================== */
-document.getElementById('jsonInput').onchange = async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-
-  const data = JSON.parse(await f.text());
-  const name = f.name.replace(/\.json$/i, '');
-  const track = createTrackData(name);
-  track.rawPoints = data.points;
-  tracks.set(track.id, track);
-  processRawPoints(track);
-
-  if (!currentTrackId) selectTrack(track.id);
-  else { selectTrack(track.id); }
-  updateTracksList();
-  fitToTrack();
-};
-
 /* ========================
    IMAGE LOADING (multi-track aware)
 ======================== */
@@ -2322,6 +2301,9 @@ document.getElementById('imagesInput').onchange = (ev) => {
   if (ct && currentIdx >= 0 && ct.imagesByIndex[currentIdx]) {
     loadImageToViewer(ct.imagesByIndex[currentIdx]);
   }
+
+  // Reset so user can pick another folder and accumulate images
+  ev.target.value = '';
 };
 
 /* ========================
