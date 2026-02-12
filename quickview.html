@@ -444,9 +444,12 @@ const marriageColors = [
   '#ADFF2F', '#DC143C'
 ];
 
-// Marriage identifier: "trackId:imageIndex" — imageIndex is permanent
-function markerKey(trackId, imageIndex) {
-  return `${trackId}:${imageIndex}`;
+// Marriage identifier: "trackName:imageIndex" — matches gpx.html format
+// e.g. "sierraalta0:142" — portable across sessions
+function markerKey(trackOrName, imageIndex) {
+  // Accept either a track object or a name string
+  const name = typeof trackOrName === 'string' ? trackOrName : trackOrName.name;
+  return `${name}:${imageIndex}`;
 }
 
 // Undo System
@@ -736,7 +739,7 @@ function updateRedMarkersSource() {
   // Show red markers from ALL tracks (so married dots on other tracks are visible)
   tracks.forEach((track) => {
     track.redMarkers.forEach((m) => {
-      const key = markerKey(track.id, m.imageIndex);
+      const key = markerKey(track.name, m.imageIndex);
       const mInfo = getMarkerMarriageInfo(key);
       features.push({
         type: 'Feature',
@@ -1038,12 +1041,9 @@ function selectTrack(trackId) {
 
   const prevTrack = getCurrentTrack();
 
-  // Hide previous track's control points and red track line
+  // Hide previous track's control points (CPs are per-track editing, only show current)
   if (prevTrack) {
     prevTrack.controlPointMarkers.forEach(m => m.getElement().style.display = 'none');
-    if (map.getLayer(`red-track-${prevTrack.id}`)) {
-      map.setLayoutProperty(`red-track-${prevTrack.id}`, 'visibility', 'none');
-    }
   }
 
   currentTrackId = trackId;
@@ -1053,11 +1053,6 @@ function selectTrack(trackId) {
   // Show current track's control points
   const showCP = document.getElementById('showControlPoints').checked;
   track.controlPointMarkers.forEach(m => m.getElement().style.display = showCP ? 'block' : 'none');
-
-  if (map.getLayer(`red-track-${track.id}`)) {
-    const showRedTrack = document.getElementById('showRedTrack').checked;
-    map.setLayoutProperty(`red-track-${track.id}`, 'visibility', showRedTrack ? 'visible' : 'none');
-  }
 
   // Update marker sources (active state + red markers switch)
   updateBlueMarkersSource();
@@ -1103,7 +1098,7 @@ function removeTrack(trackId) {
 
   // Clean up marriages referencing this track's markers
   track.redMarkers.forEach(m => {
-    divorceMarkerByKey(markerKey(trackId, m.imageIndex));
+    divorceMarkerByKey(markerKey(track.name, m.imageIndex));
   });
 
   // Revoke blob URLs
@@ -1408,7 +1403,7 @@ function deleteRedPoint(sequentialIndex) {
   // Clean up any marriages referencing this marker
   const deletedMarker = track.redMarkers[sequentialIndex];
   if (deletedMarker) {
-    divorceMarkerByKey(markerKey(track.id, deletedMarker.imageIndex));
+    divorceMarkerByKey(markerKey(track.name, deletedMarker.imageIndex));
   }
 
   track.redMarkers.splice(sequentialIndex, 1);
@@ -1488,10 +1483,11 @@ document.getElementById('showBlueTrack').onchange = (e) => {
   });
 };
 document.getElementById('showRedTrack').onchange = (e) => {
-  const ct = getCurrentTrack();
-  if (ct && map.getLayer(`red-track-${ct.id}`)) {
-    map.setLayoutProperty(`red-track-${ct.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
-  }
+  tracks.forEach(track => {
+    if (map.getLayer(`red-track-${track.id}`)) {
+      map.setLayoutProperty(`red-track-${track.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
+    }
+  });
 };
 document.getElementById('showControlPoints').onchange = updateControlsVisibility;
 
@@ -1602,12 +1598,15 @@ function divorceMarkerByKey(key) {
    MARRIAGE NAVIGATION HELPERS
 ======================== */
 function findMarkerByKey(key) {
-  const [trackId, imgIdxStr] = key.split(':');
+  const [trackName, imgIdxStr] = key.split(':');
   const imgIdx = parseInt(imgIdxStr);
-  const track = tracks.get(trackId);
-  if (!track) return null;
-  const marker = track.redMarkers.find(m => m.imageIndex === imgIdx);
-  return marker ? { marker, track, trackId } : null;
+  for (const [trackId, track] of tracks) {
+    if (track.name === trackName) {
+      const marker = track.redMarkers.find(m => m.imageIndex === imgIdx);
+      return marker ? { marker, track, trackId } : null;
+    }
+  }
+  return null;
 }
 
 function getMarriedPartners(key) {
@@ -1626,7 +1625,7 @@ function getCurrentMarkerKey() {
   const track = getCurrentTrack();
   if (!track) return null;
   const marker = track.redMarkers.find(m => m.imageIndex === currentIdx);
-  return marker ? markerKey(track.id, marker.imageIndex) : null;
+  return marker ? markerKey(track.name, marker.imageIndex) : null;
 }
 
 function calculateBranchPosition(currentMarker, partnerMarker, track) {
