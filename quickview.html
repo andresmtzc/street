@@ -289,11 +289,6 @@
 
         <div style="margin: 12px 0;">
           <div class="checkbox-row">
-            <input type="checkbox" id="autoReproject">
-            <label for="autoReproject">Auto-reproject on curve edit</label>
-          </div>
-
-          <div class="checkbox-row">
             <input type="checkbox" id="dragMode">
             <label for="dragMode" style="color:#1fb6ff; font-weight:bold;">Drag Mode</label>
           </div>
@@ -504,7 +499,7 @@ function captureCurrentState(track, action) {
       lat: m.lat,
       sequentialIndex: m.sequentialIndex,
       imageIndex: m.imageIndex,
-      distanceAlongRoute: m.distanceAlongRoute || 0,
+      distanceAlongRoute: m.distanceAlongRoute,
       isLocked: m.isLocked || false
     }))
   };
@@ -941,18 +936,13 @@ function setupMarkerEvents() {
 
     saveUndoState(track, 'drag red dot');
 
-    // Bootstrap: ensure all markers have valid distanceAlongRoute
+    // Always re-snap distanceAlongRoute from current lon/lat positions
     const totalLen = turf.length(track.redTrackLine);
-    const needsBootstrap = track.redMarkers.some((m, i) =>
-      i > 0 && (!m.distanceAlongRoute && m.distanceAlongRoute !== 0)
-    );
-    if (needsBootstrap || track.redMarkers.every((m, i) => i > 0 && m.distanceAlongRoute === 0)) {
-      track.redMarkers.forEach(m => {
-        const pt = turf.point([m.lon, m.lat]);
-        const snap = turf.nearestPointOnLine(track.redTrackLine, pt);
-        m.distanceAlongRoute = snap.properties.location;
-      });
-    }
+    track.redMarkers.forEach(m => {
+      const pt = turf.point([m.lon, m.lat]);
+      const snap = turf.nearestPointOnLine(track.redTrackLine, pt);
+      m.distanceAlongRoute = snap.properties.location;
+    });
 
     // Find boundary distances for constraining drag
     let prevBoundDist = 0;
@@ -1272,7 +1262,7 @@ function createCPMarker(lngLat, track, insertIndex) {
   marker.on('drag', () => updateRedTrackLine(track));
   marker.on('dragend', () => {
     updateRedTrackLine(track);
-    if (document.getElementById('autoReproject').checked && track.rawPoints.length > 0 && track.redMarkers.length > 0) {
+    if (track.rawPoints.length > 0 && track.redMarkers.length > 0) {
       projectPointsToRed(track);
     }
   });
@@ -2123,7 +2113,7 @@ document.getElementById('exportBtn').onclick = () => {
       originalImageIndex: m.imageIndex,
       lat: m.lat,
       lon: m.lon,
-      distanceAlongRoute: m.distanceAlongRoute || 0,
+      distanceAlongRoute: m.distanceAlongRoute,
       isLocked: m.isLocked || false
     }))
   };
@@ -2453,7 +2443,7 @@ document.getElementById('importRedInput').onchange = async (e) => {
         lat: p.lat,
         sequentialIndex: p.sequentialIndex,
         imageIndex: p.originalImageIndex,
-        distanceAlongRoute: p.distanceAlongRoute || 0,
+        distanceAlongRoute: p.distanceAlongRoute,
         isLocked: p.isLocked !== undefined ? p.isLocked : isEndpoint
       });
     });
