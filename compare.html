@@ -278,7 +278,7 @@ function initComparePairs(jpgs) {
                 baseName,
                 original: null,
                 repaired: null,
-                selected: null,
+                selected: 'repaired',
                 needsFixing: false
             });
         }
@@ -319,7 +319,7 @@ function initReviewPairs(jpgs) {
             baseName,
             original,
             repaired: file,   // the f_ fix goes in the "repaired" slot (right panel)
-            selected: null,
+            selected: 'repaired',
             needsFixing: false
         });
     }
