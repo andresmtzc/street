@@ -198,6 +198,32 @@
       z-index: 5; pointer-events: none;
     }
 
+    /* ===== TRACK LIST STYLES ===== */
+    .track-list { max-height: 180px; overflow-y: auto; }
+    .track-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; cursor: pointer; border-radius: 4px;
+      margin-bottom: 2px; font-size: 12px; color: #ccc;
+      border: 1px solid transparent;
+    }
+    .track-item:hover { background: rgba(255,255,255,0.05); }
+    .track-item.active { background: rgba(31,182,255,0.15); border-color: rgba(31,182,255,0.3); }
+    .track-color-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .track-item-name {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .track-item-count {
+      font-size: 10px; color: #666; font-family: 'JetBrains Mono', monospace;
+      white-space: nowrap;
+    }
+    .track-remove-btn {
+      background: none; border: none; color: #666; cursor: pointer;
+      font-size: 14px; padding: 0 4px; line-height: 1;
+    }
+    .track-remove-btn:hover { color: #ff4444; }
+
   </style>
 </head>
 <body>
@@ -240,6 +266,13 @@
     <div id="left-panel">
       <div class="panel-section">
         <button class="btn btn-danger" id="clearAllBtn">Clear All</button>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-title">Tracks</div>
+        <div class="track-list" id="tracks-list">
+          <div style="text-align:center; color:#555; font-size:11px; padding:10px;">No tracks loaded</div>
+        </div>
       </div>
 
       <div class="panel-section">
@@ -326,12 +359,12 @@
     <div id="ui-overlay">
       <div style="display:flex; flex-direction:column; gap:4px; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 6px;">
         <label style="font-size:10px; font-weight:bold; color:#26a269;">CREATE BLUE POINTS</label>
-        <input id="gpxInput" type="file" accept=".gpx" style="font-size:11px; max-width: 180px;"/>
+        <input id="gpxInput" type="file" accept=".gpx" multiple style="font-size:11px; max-width: 180px;"/>
         <div style="display:flex; gap:6px; align-items:center;">
           <input id="numPointsInput" type="number" min="2" value="10" style="width:50px; font-size:11px; padding:2px 4px; background:#222; border:1px solid #444; color:white; border-radius:3px;"/>
           <span style="font-size:10px; color:#999;">points</span>
         </div>
-        <button id="generateFromGpxBtn" disabled style="background:#26a269; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Generate Points</button>
+        <button id="generateFromGpxBtn" disabled style="background:#26a269; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Regenerate Points</button>
         <button id="exportCreatedJsonBtn" disabled style="background:#333; color:white; border:none; padding:4px 8px; font-size:10px; border-radius:4px; cursor:pointer;">Export JSON</button>
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
@@ -361,15 +394,24 @@ const map = new mapboxgl.Map({
   zoom: 15
 });
 
-// Data Storage
-let rawPoints = []; // The loaded JSON data
-let blueMarkers = []; // Original Blue Dots
-let redMarkers = [];  // Projected Red Dots (Object: { marker, data })
-let controlPointMarkers = [];
-let controlPoints = [];
+/* ========================
+   TRACK COLORS
+======================== */
+const trackColors = [
+  '#2b6df6', '#EA4335', '#34A853', '#FBBC05', '#FF6D01',
+  '#46BDC6', '#9334E6', '#E67C73', '#109D58', '#3F51B5'
+];
 
-// Viewer State
-let imagesByIndex = {};
+/* ========================
+   MULTI-TRACK STATE
+======================== */
+let tracks = new Map();
+let currentTrackId = null;
+let nextTrackId = 1;
+
+/* ========================
+   VIEWER STATE
+======================== */
 let currentIdx = -1;
 
 // Three.js Viewer State
@@ -378,8 +420,7 @@ let currentYaw = 0, currentPitch = 0, currentFov = 75;
 let viewerInitialized = false;
 let preloadedImages = {};
 
-// Logic State
-let redTrackLine = null;
+// Mode State
 let addCPModeActive = false;
 let removeCPModeActive = false;
 let dragModeActive = false;
@@ -415,11 +456,163 @@ function generateCatmullRomCurve(controlPts, segmentsPerSection = 20) {
 }
 
 /* ========================
-   INITIALIZATION
+   TRACK MANAGEMENT
 ======================== */
+function createTrackData(name) {
+  const id = `track-${nextTrackId++}`;
+  return {
+    id: id,
+    name: name,
+    color: trackColors[(nextTrackId - 2) % trackColors.length],
+    gpxLine: null,
+    rawPoints: [],
+    blueMarkers: [],
+    imagesByIndex: {},
+    redMarkers: [],
+    controlPointMarkers: [],
+    controlPoints: [],
+    redTrackLine: null,
+  };
+}
 
-// GPX Creation State
-let loadedGpxTrack = null; // Stores parsed GPX track as turf lineString
+function getCurrentTrack() {
+  return currentTrackId ? tracks.get(currentTrackId) : null;
+}
+
+function findTrackByName(name) {
+  const nameLower = name.toLowerCase();
+  for (const [id, track] of tracks) {
+    if (track.name.toLowerCase() === nameLower) return track;
+  }
+  return null;
+}
+
+function selectTrack(trackId) {
+  if (currentTrackId === trackId) return;
+
+  const prevTrack = getCurrentTrack();
+
+  // Hide previous track's red markers and control points
+  if (prevTrack) {
+    prevTrack.redMarkers.forEach(m => m.marker.getElement().style.display = 'none');
+    prevTrack.controlPointMarkers.forEach(m => m.getElement().style.display = 'none');
+    if (map.getLayer(`red-track-${prevTrack.id}`)) {
+      map.setLayoutProperty(`red-track-${prevTrack.id}`, 'visibility', 'none');
+    }
+  }
+
+  currentTrackId = trackId;
+  const track = getCurrentTrack();
+  if (!track) return;
+
+  // Show current track's red markers and control points
+  const showRed = document.getElementById('showRedDots').checked;
+  const showCP = document.getElementById('showControlPoints').checked;
+  track.redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
+  track.controlPointMarkers.forEach(m => m.getElement().style.display = showCP ? 'block' : 'none');
+
+  if (map.getLayer(`red-track-${track.id}`)) {
+    const showRedTrack = document.getElementById('showRedTrack').checked;
+    map.setLayoutProperty(`red-track-${track.id}`, 'visibility', showRedTrack ? 'visible' : 'none');
+  }
+
+  // Update button states
+  document.getElementById('projectPointsBtn').disabled = !track.redTrackLine;
+  document.getElementById('exportBtn').disabled = track.redMarkers.length === 0;
+  document.getElementById('exportGpxBtn').disabled = track.redMarkers.length === 0;
+  document.getElementById('generateFromGpxBtn').disabled = !track.gpxLine;
+  document.getElementById('exportCreatedJsonBtn').disabled = track.rawPoints.length === 0;
+
+  // Reset modes
+  dragModeActive = false;
+  removePointModeActive = false;
+  document.getElementById('dragMode').checked = false;
+  document.getElementById('removePointMode').checked = false;
+
+  updateTracksList();
+  updateStatus();
+
+  // Open first point of this track in viewer
+  if (track.rawPoints.length > 0) {
+    openViewer(track.rawPoints[0].index);
+  }
+}
+
+function removeTrack(trackId) {
+  const track = tracks.get(trackId);
+  if (!track) return;
+
+  // Remove map layers
+  if (map.getLayer(`blue-track-${trackId}`)) map.removeLayer(`blue-track-${trackId}`);
+  if (map.getSource(`blue-track-${trackId}`)) map.removeSource(`blue-track-${trackId}`);
+  if (map.getLayer(`red-track-${trackId}`)) map.removeLayer(`red-track-${trackId}`);
+  if (map.getSource(`red-track-${trackId}`)) map.removeSource(`red-track-${trackId}`);
+
+  // Remove markers
+  track.blueMarkers.forEach(m => m.remove());
+  track.redMarkers.forEach(m => m.marker.remove());
+  track.controlPointMarkers.forEach(m => m.remove());
+
+  // Revoke blob URLs
+  Object.values(track.imagesByIndex).forEach(url => {
+    if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+  });
+
+  tracks.delete(trackId);
+
+  if (currentTrackId === trackId) {
+    currentTrackId = null;
+    if (tracks.size > 0) {
+      selectTrack(tracks.keys().next().value);
+    } else {
+      updateTracksList();
+      updateStatus();
+      document.getElementById('empty-msg').style.display = 'flex';
+      document.getElementById('empty-msg').textContent = 'Load data to begin';
+      document.getElementById('viewer-title').textContent = 'Street View';
+      document.getElementById('viewer-meta').textContent = '';
+      document.getElementById('time').textContent = '-/-';
+      currentIdx = -1;
+    }
+  } else {
+    updateTracksList();
+    updateStatus();
+  }
+}
+
+function updateTracksList() {
+  const list = document.getElementById('tracks-list');
+
+  if (tracks.size === 0) {
+    list.innerHTML = '<div style="text-align:center; color:#555; font-size:11px; padding:10px;">No tracks loaded</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  tracks.forEach((track, trackId) => {
+    const item = document.createElement('div');
+    item.className = `track-item ${trackId === currentTrackId ? 'active' : ''}`;
+
+    const imgCount = Object.keys(track.imagesByIndex).length;
+
+    item.innerHTML = `
+      <div class="track-color-dot" style="background:${track.color}"></div>
+      <div class="track-item-name" title="${track.name}">${track.name}</div>
+      <div class="track-item-count">${track.rawPoints.length}pt${imgCount ? ' · ' + imgCount + 'img' : ''}</div>
+      <button class="track-remove-btn" data-track-id="${trackId}" title="Remove">&times;</button>
+    `;
+
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('track-remove-btn')) {
+        removeTrack(e.target.dataset.trackId);
+        return;
+      }
+      selectTrack(trackId);
+    });
+
+    list.appendChild(item);
+  });
+}
 
 /* ========================
    GPX PARSING & POINT GENERATION
@@ -472,74 +665,86 @@ function generatePointsFromGpx(trackLine, numPoints) {
   return points;
 }
 
-function processRawPoints(points) {
-  rawPoints = points.sort((a,b) => a.index - b.index);
+/* ========================
+   PROCESS RAW POINTS (per-track)
+======================== */
+function processRawPoints(track) {
+  track.rawPoints.sort((a, b) => a.index - b.index);
 
-  // Clear existing blue markers
-  blueMarkers.forEach(m => m.remove());
-  blueMarkers = [];
+  // Clear existing blue markers for this track
+  track.blueMarkers.forEach(m => m.remove());
+  track.blueMarkers = [];
 
-  // 1. Draw Blue Track
-  if (map.getSource('blue-track')) map.removeSource('blue-track');
-  if (map.getLayer('blue-track')) map.removeLayer('blue-track');
+  // Remove old blue track layer
+  if (map.getLayer(`blue-track-${track.id}`)) map.removeLayer(`blue-track-${track.id}`);
+  if (map.getSource(`blue-track-${track.id}`)) map.removeSource(`blue-track-${track.id}`);
 
-  map.addSource('blue-track', {
-    type:'geojson',
-    data: { type:'Feature', geometry: { type:'LineString', coordinates: rawPoints.map(p=>[p.lon,p.lat]) } }
+  // Draw Blue Track line with track color
+  map.addSource(`blue-track-${track.id}`, {
+    type: 'geojson',
+    data: { type: 'Feature', geometry: { type: 'LineString', coordinates: track.rawPoints.map(p => [p.lon, p.lat]) } }
   });
   map.addLayer({
-    id:'blue-track', type:'line', source:'blue-track',
-    paint: { 'line-color':'#2b6df6', 'line-width':3, 'line-opacity': 0.6 }
+    id: `blue-track-${track.id}`, type: 'line', source: `blue-track-${track.id}`,
+    paint: { 'line-color': track.color, 'line-width': 3, 'line-opacity': 0.6 }
   });
 
-  // 2. Create Blue Dots
-  rawPoints.forEach((p, arrayIndex) => {
+  // Create Blue Dots
+  track.rawPoints.forEach((p) => {
     const el = document.createElement('div');
     el.className = 'custom-marker blue-dot';
     el.innerText = p.index;
-    el.onclick = () => openViewer(p.index);
+    el.style.backgroundColor = track.color;
+    el.onclick = () => {
+      if (currentTrackId !== track.id) selectTrack(track.id);
+      openViewer(p.index);
+    };
 
     const marker = new mapboxgl.Marker({ element: el })
       .setLngLat([p.lon, p.lat])
       .addTo(map);
 
-    blueMarkers.push(marker);
+    track.blueMarkers.push(marker);
   });
 
   updateDotsVisibility();
-  updateMarkerColors();
+  updateMarkerColors(track);
   updateStatus();
-  fitToTrack();
-  if(rawPoints.length > 0) openViewer(rawPoints[0].index);
 }
 
 /* ========================
-   RED TRACK GENERATION
+   RED TRACK GENERATION (per-track)
 ======================== */
 function generateRedTrack() {
-  const cpCount = Math.max(4, Math.round(rawPoints.length / 5));
-  const step = Math.floor(rawPoints.length / (cpCount - 1));
+  const track = getCurrentTrack();
+  if (!track || track.rawPoints.length === 0) return;
 
-  controlPointMarkers.forEach(m => m.remove());
-  controlPointMarkers = [];
-  controlPoints = [];
+  const cpCount = Math.max(4, Math.round(track.rawPoints.length / 5));
+  const step = Math.floor(track.rawPoints.length / (cpCount - 1));
 
-  for (let i = 0; i < rawPoints.length; i += step) {
-    controlPoints.push([rawPoints[i].lon, rawPoints[i].lat]);
-    if (controlPoints.length >= cpCount - 1) break;
+  track.controlPointMarkers.forEach(m => m.remove());
+  track.controlPointMarkers = [];
+  track.controlPoints = [];
+
+  for (let i = 0; i < track.rawPoints.length; i += step) {
+    track.controlPoints.push([track.rawPoints[i].lon, track.rawPoints[i].lat]);
+    if (track.controlPoints.length >= cpCount - 1) break;
   }
-  const lastP = rawPoints[rawPoints.length - 1];
-  controlPoints.push([lastP.lon, lastP.lat]);
+  const lastP = track.rawPoints[track.rawPoints.length - 1];
+  track.controlPoints.push([lastP.lon, lastP.lat]);
 
-  controlPoints.forEach(cp => createCPMarker(cp));
+  track.controlPoints.forEach(cp => createCPMarker(cp, track));
 
-  updateRedTrackLine();
+  updateRedTrackLine(track);
   document.getElementById('showRedTrack').checked = true;
   document.getElementById('projectPointsBtn').disabled = false;
   updateStatus();
 }
 
-function createCPMarker(lngLat) {
+function createCPMarker(lngLat, track) {
+  if (!track) track = getCurrentTrack();
+  if (!track) return;
+
   const el = document.createElement('div');
   el.className = 'control-point-marker';
 
@@ -548,73 +753,79 @@ function createCPMarker(lngLat) {
     .addTo(map);
 
   el.onclick = (e) => {
-    if (removeCPModeActive && controlPointMarkers.length > 3) {
+    if (removeCPModeActive && track.controlPointMarkers.length > 3) {
       e.stopPropagation();
       marker.remove();
-      controlPointMarkers = controlPointMarkers.filter(m => m !== marker);
-      updateRedTrackLine();
+      track.controlPointMarkers = track.controlPointMarkers.filter(m => m !== marker);
+      updateRedTrackLine(track);
     }
   };
 
-  marker.on('drag', updateRedTrackLine);
+  marker.on('drag', () => updateRedTrackLine(track));
   marker.on('dragend', () => {
-    updateRedTrackLine();
-    if (document.getElementById('autoReproject').checked && rawPoints.length > 0 && redMarkers.length > 0) {
-      projectPointsToRed();
+    updateRedTrackLine(track);
+    if (document.getElementById('autoReproject').checked && track.rawPoints.length > 0 && track.redMarkers.length > 0) {
+      projectPointsToRed(track);
     }
   });
-  controlPointMarkers.push(marker);
+  track.controlPointMarkers.push(marker);
   updateControlsVisibility();
 }
 
-function updateRedTrackLine() {
-  controlPoints = controlPointMarkers.map(m => { const ll = m.getLngLat(); return [ll.lng, ll.lat]; });
+function updateRedTrackLine(track) {
+  if (!track) track = getCurrentTrack();
+  if (!track) return;
 
-  const smoothCurve = generateCatmullRomCurve(controlPoints, 30);
-  redTrackLine = turf.lineString(smoothCurve);
+  track.controlPoints = track.controlPointMarkers.map(m => { const ll = m.getLngLat(); return [ll.lng, ll.lat]; });
 
-  if (map.getLayer('red-track')) map.removeLayer('red-track');
-  if (map.getSource('red-track')) map.removeSource('red-track');
+  const smoothCurve = generateCatmullRomCurve(track.controlPoints, 30);
+  track.redTrackLine = turf.lineString(smoothCurve);
 
-  map.addSource('red-track', {
+  const layerId = `red-track-${track.id}`;
+  const sourceId = `red-track-${track.id}`;
+
+  if (map.getLayer(layerId)) map.removeLayer(layerId);
+  if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+  map.addSource(sourceId, {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
   });
 
   map.addLayer({
-    id: 'red-track', type: 'line', source: 'red-track',
+    id: layerId, type: 'line', source: sourceId,
     paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
     layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
   });
 }
 
 /* ========================
-   PROJECT TO RED DOTS
+   PROJECT TO RED DOTS (per-track)
 ======================== */
-function projectPointsToRed() {
-  if (!redTrackLine) return;
+function projectPointsToRed(track) {
+  if (!track) track = getCurrentTrack();
+  if (!track || !track.redTrackLine) return;
 
-  redMarkers.forEach(item => item.marker.remove());
-  redMarkers = [];
+  track.redMarkers.forEach(item => item.marker.remove());
+  track.redMarkers = [];
 
-  const blueTrack = turf.lineString(rawPoints.map(p => [p.lon, p.lat]));
+  const blueTrack = turf.lineString(track.rawPoints.map(p => [p.lon, p.lat]));
   const blueLen = turf.length(blueTrack);
-  const redLen = turf.length(redTrackLine);
+  const redLen = turf.length(track.redTrackLine);
 
   let cumulativeDist = 0;
 
-  rawPoints.forEach((p, idx) => {
+  track.rawPoints.forEach((p, idx) => {
     if (idx > 0) {
-      const prev = rawPoints[idx-1];
+      const prev = track.rawPoints[idx - 1];
       cumulativeDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
     }
 
     const ratio = blueLen > 0 ? cumulativeDist / blueLen : 0;
-    const pointOnRed = turf.along(redTrackLine, ratio * redLen);
+    const pointOnRed = turf.along(track.redTrackLine, ratio * redLen);
     const coord = pointOnRed.geometry.coordinates;
 
-    const imageIndex = p.index;
-    createRedMarker(coord, idx, imageIndex);
+    createRedMarker(coord, idx, p.index, track);
   });
 
   document.getElementById('showRedDots').checked = true;
@@ -624,7 +835,10 @@ function projectPointsToRed() {
   updateStatus();
 }
 
-function createRedMarker(coord, sequentialIndex, imageIndex) {
+function createRedMarker(coord, sequentialIndex, imageIndex, track) {
+  if (!track) track = getCurrentTrack();
+  if (!track) return;
+
   const el = document.createElement('div');
   el.className = 'custom-marker red-dot';
   el.innerText = imageIndex;
@@ -641,16 +855,17 @@ function createRedMarker(coord, sequentialIndex, imageIndex) {
       lat: coord[1],
       sequentialIndex: sequentialIndex,
       imageIndex: imageIndex,
-      associatedImage: imagesByIndex[imageIndex]
+      associatedImage: track.imagesByIndex[imageIndex]
     }
   };
 
   el.onclick = (e) => {
     if (removePointModeActive) {
-      deleteRedPoint(markerObj);
+      deleteRedPoint(markerObj, track);
       return;
     }
     if (!dragModeActive && !removePointModeActive) {
+      if (currentTrackId !== track.id) selectTrack(track.id);
       openViewer(imageIndex);
     }
   };
@@ -662,28 +877,30 @@ function createRedMarker(coord, sequentialIndex, imageIndex) {
   marker.on('drag', () => {
     const ll = marker.getLngLat();
     const point = turf.point([ll.lng, ll.lat]);
-    const snapped = turf.nearestPointOnLine(redTrackLine, point);
+    const snapped = turf.nearestPointOnLine(track.redTrackLine, point);
     marker.setLngLat(snapped.geometry.coordinates);
     markerObj.data.lon = snapped.geometry.coordinates[0];
     markerObj.data.lat = snapped.geometry.coordinates[1];
   });
 
-  redMarkers.push(markerObj);
+  track.redMarkers.push(markerObj);
   updateDotsVisibility();
 }
 
 /* ========================
    DELETE & RE-INDEX RED DOTS
 ======================== */
-function deleteRedPoint(targetObj) {
-  const deletedImageIndex = targetObj.data.imageIndex;
+function deleteRedPoint(targetObj, track) {
+  if (!track) track = getCurrentTrack();
+  if (!track) return;
+
   targetObj.marker.remove();
-  const indexToRemove = redMarkers.indexOf(targetObj);
+  const indexToRemove = track.redMarkers.indexOf(targetObj);
   if (indexToRemove > -1) {
-    redMarkers.splice(indexToRemove, 1);
+    track.redMarkers.splice(indexToRemove, 1);
   }
 
-  redMarkers.forEach((item, newSeqIndex) => {
+  track.redMarkers.forEach((item, newSeqIndex) => {
     item.data.sequentialIndex = newSeqIndex;
   });
 
@@ -697,35 +914,73 @@ function updateDotsVisibility() {
   const showBlue = document.getElementById('showBlueDots').checked;
   const showRed = document.getElementById('showRedDots').checked;
 
-  blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
-  redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
+  // Blue dots for ALL tracks
+  tracks.forEach(track => {
+    track.blueMarkers.forEach(m => m.getElement().style.display = showBlue ? 'flex' : 'none');
+  });
+
+  // Red dots only for current track
+  const ct = getCurrentTrack();
+  if (ct) {
+    ct.redMarkers.forEach(m => m.marker.getElement().style.display = showRed ? 'flex' : 'none');
+  }
 }
 
 function updateControlsVisibility() {
   const show = document.getElementById('showControlPoints').checked;
-  controlPointMarkers.forEach(m => m.getElement().style.display = show ? 'block' : 'none');
+  const ct = getCurrentTrack();
+  if (ct) {
+    ct.controlPointMarkers.forEach(m => m.getElement().style.display = show ? 'block' : 'none');
+  }
 }
 
 function updateStatus() {
-  document.getElementById('blueCount').innerText = blueMarkers.length;
-  document.getElementById('projectedCount').innerText = redMarkers.length;
-
-  if (redMarkers.length > 0) {
-    const firstImage = redMarkers[0].data.imageIndex;
-    const lastImage = redMarkers[redMarkers.length - 1].data.imageIndex;
-    document.getElementById('viewer-meta').textContent =
-      `Images: ${firstImage} -> ${lastImage} (${redMarkers.length} points)`;
+  const ct = getCurrentTrack();
+  if (!ct) {
+    document.getElementById('blueCount').innerText = '0';
+    document.getElementById('projectedCount').innerText = '0';
+    document.getElementById('viewer-meta').textContent = '';
+    return;
   }
+
+  const imgCount = ct.rawPoints.filter(p => ct.imagesByIndex[p.index]).length;
+  document.getElementById('blueCount').innerText = `${ct.blueMarkers.length} (${imgCount} imgs)`;
+  document.getElementById('projectedCount').innerText = ct.redMarkers.length;
+
+  if (ct.redMarkers.length > 0) {
+    const firstImage = ct.redMarkers[0].data.imageIndex;
+    const lastImage = ct.redMarkers[ct.redMarkers.length - 1].data.imageIndex;
+    document.getElementById('viewer-meta').textContent =
+      `${ct.name} · ${firstImage} → ${lastImage} (${ct.redMarkers.length} pts)`;
+  } else {
+    document.getElementById('viewer-meta').textContent = ct.name;
+  }
+}
+
+function updateMarkerColors(track) {
+  track.blueMarkers.forEach((marker, idx) => {
+    const p = track.rawPoints[idx];
+    if (!p) return;
+    const el = marker.getElement();
+    el.style.backgroundColor = track.imagesByIndex[p.index] ? '#26a269' : track.color;
+  });
 }
 
 document.getElementById('showBlueDots').onchange = updateDotsVisibility;
 document.getElementById('showRedDots').onchange = updateDotsVisibility;
 
 document.getElementById('showBlueTrack').onchange = (e) => {
-  if (map.getLayer('blue-track')) map.setLayoutProperty('blue-track', 'visibility', e.target.checked ? 'visible' : 'none');
+  tracks.forEach(track => {
+    if (map.getLayer(`blue-track-${track.id}`)) {
+      map.setLayoutProperty(`blue-track-${track.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
+    }
+  });
 };
 document.getElementById('showRedTrack').onchange = (e) => {
-  if (map.getLayer('red-track')) map.setLayoutProperty('red-track', 'visibility', e.target.checked ? 'visible' : 'none');
+  const ct = getCurrentTrack();
+  if (ct && map.getLayer(`red-track-${ct.id}`)) {
+    map.setLayoutProperty(`red-track-${ct.id}`, 'visibility', e.target.checked ? 'visible' : 'none');
+  }
 };
 document.getElementById('showControlPoints').onchange = updateControlsVisibility;
 
@@ -746,37 +1001,46 @@ document.getElementById('dragMode').onchange = (e) => {
   dragModeActive = e.target.checked;
   removePointModeActive = false; document.getElementById('removePointMode').checked = false;
 
-  redMarkers.forEach(m => {
-    m.marker.setDraggable(dragModeActive);
-    m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
-  });
+  const ct = getCurrentTrack();
+  if (ct) {
+    ct.redMarkers.forEach(m => {
+      m.marker.setDraggable(dragModeActive);
+      m.marker.getElement().style.cursor = dragModeActive ? 'move' : 'pointer';
+    });
+  }
 };
 
 document.getElementById('removePointMode').onchange = (e) => {
   removePointModeActive = e.target.checked;
   dragModeActive = false; document.getElementById('dragMode').checked = false;
 
-  redMarkers.forEach(m => {
-    m.marker.setDraggable(false);
-    const el = m.marker.getElement();
-    if (removePointModeActive) {
-      el.classList.add('delete-cursor');
-    } else {
-      el.classList.remove('delete-cursor');
-      el.style.cursor = 'pointer';
-    }
-  });
+  const ct = getCurrentTrack();
+  if (ct) {
+    ct.redMarkers.forEach(m => {
+      m.marker.setDraggable(false);
+      const el = m.marker.getElement();
+      if (removePointModeActive) {
+        el.classList.add('delete-cursor');
+      } else {
+        el.classList.remove('delete-cursor');
+        el.style.cursor = 'pointer';
+      }
+    });
+  }
 };
 
 /* ========================
    MAP EVENTS
 ======================== */
 map.on('click', (e) => {
-  if (addCPModeActive && redTrackLine) {
-    const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
-    const snapped = turf.nearestPointOnLine(redTrackLine, point);
-    createCPMarker(snapped.geometry.coordinates);
-    updateRedTrackLine();
+  if (addCPModeActive) {
+    const ct = getCurrentTrack();
+    if (ct && ct.redTrackLine) {
+      const point = turf.point([e.lngLat.lng, e.lngLat.lat]);
+      const snapped = turf.nearestPointOnLine(ct.redTrackLine, point);
+      createCPMarker(snapped.geometry.coordinates, ct);
+      updateRedTrackLine(ct);
+    }
   }
 });
 
@@ -813,14 +1077,17 @@ function destFromBearingDistance(lat, lon, brngDeg, distMeters) {
    NAVIGATION HELPERS
 ======================== */
 function getActivePoints() {
-  if (redMarkers.length > 0) {
-    return redMarkers.map(m => ({
+  const track = getCurrentTrack();
+  if (!track) return [];
+
+  if (track.redMarkers.length > 0) {
+    return track.redMarkers.map(m => ({
       index: m.data.imageIndex,
       lon: m.data.lon,
       lat: m.data.lat
     }));
   }
-  return rawPoints;
+  return track.rawPoints;
 }
 
 function getCurrentPointPosition() {
@@ -925,7 +1192,6 @@ function updateNavigationRing() {
   const prevBtn = document.getElementById('prevImageBtn');
   if (!ring || !sphere) return;
 
-  // Rotate ring to match yaw
   const yawDegrees = THREE.MathUtils.radToDeg(currentYaw);
   ring.style.transform = `rotateZ(${-yawDegrees}deg)`;
 
@@ -949,7 +1215,6 @@ function updateNavigationRing() {
    SPHERE IMAGE DISPLAY
 ======================== */
 function applyImageToSphere(img) {
-  // Remove old sphere
   if (sphere) {
     panoGroup.remove(sphere);
     if (sphere.geometry) sphere.geometry.dispose();
@@ -969,7 +1234,6 @@ function applyImageToSphere(img) {
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
   sphere = new THREE.Mesh(geometry, material);
 
-  // Keep current orientation
   sphere.rotation.y = currentYaw;
   sphere.rotation.x = currentPitch;
 
@@ -982,7 +1246,6 @@ function loadImageToViewer(imageUrl) {
     initThreeJSViewer();
   }
 
-  // Check preload cache
   if (preloadedImages[imageUrl]) {
     applyImageToSphere(preloadedImages[imageUrl]);
     hideViewerLoading();
@@ -1018,15 +1281,17 @@ function loadImageToViewer(imageUrl) {
    IMAGE PRELOADING
 ======================== */
 function preloadAdjacentImages() {
+  const track = getCurrentTrack();
+  if (!track) return;
+
   const pts = getActivePoints();
   const curPos = pts.findIndex(p => p.index === currentIdx);
   if (curPos < 0) return;
 
-  // Preload next and previous
   [-1, 1, -2, 2].forEach(offset => {
     const idx = curPos + offset;
     if (idx >= 0 && idx < pts.length) {
-      const imgUrl = imagesByIndex[pts[idx].index];
+      const imgUrl = track.imagesByIndex[pts[idx].index];
       if (imgUrl && !preloadedImages[imgUrl]) {
         const img = new Image();
         img.crossOrigin = 'Anonymous';
@@ -1061,7 +1326,6 @@ function setupViewerEventListeners() {
   let isDragging = false;
   let lastX = 0, lastY = 0;
 
-  // Mouse controls
   canvas.addEventListener('mousedown', (e) => {
     isDragging = true;
     disableNavButtons();
@@ -1099,7 +1363,6 @@ function setupViewerEventListeners() {
   canvas.addEventListener('mouseenter', () => { canvas.style.cursor = 'grab'; });
   canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'default'; });
 
-  // Wheel zoom
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1114,14 +1377,11 @@ function setupViewerEventListeners() {
     }
   }, { passive: false });
 
-  // Touch controls
   setupTouchGestures(canvas);
 
-  // Navigation buttons
   document.getElementById('nextImageBtn').addEventListener('click', navigateForward);
   document.getElementById('prevImageBtn').addEventListener('click', navigateBackward);
 
-  // Zoom buttons
   document.getElementById('zoomInBtn').addEventListener('click', () => {
     if (currentFov > 30) {
       currentFov -= 5;
@@ -1270,7 +1530,6 @@ function updateViewCone() {
   const pos = getCurrentPointPosition();
   if (!pos) return;
 
-  // Compute path bearing from current to next point
   const nextPos = getNextPointPosition();
   const prevPos = getPrevPointPosition();
   let pathBearing = lastPathBearing;
@@ -1281,7 +1540,6 @@ function updateViewCone() {
     pathBearing = bearingDeg(prevPos, pos);
   }
 
-  // Smooth bearing changes
   if (lastPathBearing !== undefined) {
     let diff = pathBearing - lastPathBearing;
     if (Math.abs(diff) > 180) {
@@ -1290,7 +1548,6 @@ function updateViewCone() {
   }
   lastPathBearing = pathBearing;
 
-  // Combine path bearing with user yaw
   const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
   const finalHeading = (pathBearing + userYawDeg + 360) % 360;
 
@@ -1312,7 +1569,6 @@ function hideViewCone() {
   }
 }
 
-// Update cone when map moves/zooms
 map.on('zoom', () => { if (currentIdx >= 0) updateViewCone(); });
 map.on('move', () => { if (currentIdx >= 0) updateViewCone(); });
 
@@ -1320,18 +1576,19 @@ map.on('move', () => { if (currentIdx >= 0) updateViewCone(); });
    VIEWER & NAVIGATION
 ======================== */
 function openViewer(id) {
-  const p = rawPoints.find(rp => rp.index === id);
+  const track = getCurrentTrack();
+  if (!track) return;
+
+  const p = track.rawPoints.find(rp => rp.index === id);
   if (!p) return;
 
   currentIdx = id;
 
   document.getElementById('empty-msg').style.display = 'none';
 
-  // Load image via Three.js
-  if (imagesByIndex[id]) {
-    loadImageToViewer(imagesByIndex[id]);
+  if (track.imagesByIndex[id]) {
+    loadImageToViewer(track.imagesByIndex[id]);
   } else {
-    // No image for this point - show empty sphere or message
     if (!viewerInitialized) initThreeJSViewer();
   }
 
@@ -1346,46 +1603,61 @@ function openViewer(id) {
   document.querySelectorAll('.blue-dot').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.red-dot').forEach(el => el.classList.remove('active'));
 
-  const activeBlueMarker = blueMarkers.find(m => m.getElement().innerText == id);
+  const activeBlueMarker = track.blueMarkers.find(m => m.getElement().innerText == id);
   if (activeBlueMarker) activeBlueMarker.getElement().classList.add('active');
 
-  const activeRedMarker = redMarkers.find(m => m.data.imageIndex == id);
+  const activeRedMarker = track.redMarkers.find(m => m.data.imageIndex == id);
   if (activeRedMarker) activeRedMarker.marker.getElement().classList.add('active');
 
   map.easeTo({ center: [p.lon, p.lat] });
-  document.getElementById('viewer-title').innerText = `Point ${id}`;
+  document.getElementById('viewer-title').innerText = `${track.name} · Point ${id}`;
 
-  // Update view cone
   updateViewCone();
 }
 
 function fitToTrack() {
-  if(!rawPoints.length) return;
+  const ct = getCurrentTrack();
+  if (ct && ct.rawPoints.length > 0) {
+    const b = new mapboxgl.LngLatBounds();
+    ct.rawPoints.forEach(p => b.extend([p.lon, p.lat]));
+    map.fitBounds(b, { padding: 50 });
+    return;
+  }
+  fitToAllTracks();
+}
+
+function fitToAllTracks() {
   const b = new mapboxgl.LngLatBounds();
-  rawPoints.forEach(p => b.extend([p.lon, p.lat]));
-  map.fitBounds(b, { padding: 50 });
+  let hasPoints = false;
+  tracks.forEach(t => {
+    t.rawPoints.forEach(p => { b.extend([p.lon, p.lat]); hasPoints = true; });
+  });
+  if (hasPoints) map.fitBounds(b, { padding: 50 });
 }
 
 /* ========================
    BUTTON LISTENERS
 ======================== */
 document.getElementById('generateRedBtn').onclick = generateRedTrack;
-document.getElementById('projectPointsBtn').onclick = projectPointsToRed;
+document.getElementById('projectPointsBtn').onclick = () => projectPointsToRed();
 document.getElementById('fitBtn').onclick = fitToTrack;
 
 document.getElementById('exportBtn').onclick = () => {
+  const track = getCurrentTrack();
+  if (!track) return;
+
   const exportData = {
-    rawPoints: rawPoints.map(p => ({
+    rawPoints: track.rawPoints.map(p => ({
       index: p.index,
       lat: p.lat,
       lon: p.lon,
-      imageUrl: imagesByIndex[p.index]
+      imageUrl: track.imagesByIndex[p.index]
     })),
-    controlPoints: controlPointMarkers.map(m => {
+    controlPoints: track.controlPointMarkers.map(m => {
       const ll = m.getLngLat();
       return { lon: ll.lng, lat: ll.lat };
     }),
-    redMarkers: redMarkers.map(m => ({
+    redMarkers: track.redMarkers.map(m => ({
       sequentialIndex: m.data.sequentialIndex,
       originalImageIndex: m.data.imageIndex,
       lat: m.data.lat,
@@ -1396,19 +1668,20 @@ document.getElementById('exportBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'smoothed_path_with_images.json';
+  a.download = `${track.name}_smoothed_path.json`;
   a.click();
 };
 
 document.getElementById('exportGpxBtn').onclick = () => {
-  if (!redTrackLine || redMarkers.length === 0) return;
+  const track = getCurrentTrack();
+  if (!track || !track.redTrackLine || track.redMarkers.length === 0) return;
 
-  const curveCoords = redTrackLine.geometry.coordinates;
+  const curveCoords = track.redTrackLine.geometry.coordinates;
 
   let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
   gpx += '<gpx version="1.1" creator="Quickview Editor" xmlns="http://www.topografix.com/GPX/1/1">\n';
   gpx += '  <trk>\n';
-  gpx += '    <name>smoothed_track</name>\n';
+  gpx += `    <name>${track.name}_smoothed</name>\n`;
   gpx += '    <trkseg>\n';
 
   curveCoords.forEach(coord => {
@@ -1418,12 +1691,10 @@ document.getElementById('exportGpxBtn').onclick = () => {
   gpx += '    </trkseg>\n';
   gpx += '  </trk>\n';
 
-  redMarkers.forEach((m, idx) => {
-    const imageIndex = m.data.imageIndex;
-    const photoNum = idx + 1;
+  track.redMarkers.forEach((m, idx) => {
     gpx += `  <wpt lat="${m.data.lat}" lon="${m.data.lon}">\n`;
-    gpx += `    <name>Photo_${photoNum} - Image ${imageIndex}</name>\n`;
-    gpx += `    <desc>Marble position along route - Image ${imageIndex}</desc>\n`;
+    gpx += `    <name>Photo_${idx + 1} - Image ${m.data.imageIndex}</name>\n`;
+    gpx += `    <desc>Marble position along route - Image ${m.data.imageIndex}</desc>\n`;
     gpx += `  </wpt>\n`;
   });
 
@@ -1432,43 +1703,54 @@ document.getElementById('exportGpxBtn').onclick = () => {
   const blob = new Blob([gpx], {type: 'application/gpx+xml'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'smoothed_track.gpx';
+  a.download = `${track.name}_smoothed.gpx`;
   a.click();
 };
 
-document.getElementById('jsonInput').onchange = async (e) => {
-  const f = e.target.files[0];
-  if(f) processRawPoints(JSON.parse(await f.text()).points);
+/* ========================
+   GPX LOADING (multi-file)
+======================== */
+document.getElementById('gpxInput').onchange = async (e) => {
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+
+  const numPoints = parseInt(document.getElementById('numPointsInput').value) || 10;
+
+  for (const f of files) {
+    const gpxText = await f.text();
+    const gpxLine = parseGpxFile(gpxText);
+    if (!gpxLine) continue;
+
+    const name = f.name.replace(/\.gpx$/i, '');
+    const track = createTrackData(name);
+    track.gpxLine = gpxLine;
+
+    const points = generatePointsFromGpx(gpxLine, numPoints);
+    if (points.length > 0) {
+      track.rawPoints = points;
+      tracks.set(track.id, track);
+      processRawPoints(track);
+    }
+  }
+
+  // Select first track if none selected
+  if (!currentTrackId && tracks.size > 0) {
+    selectTrack(tracks.keys().next().value);
+  }
+
+  updateTracksList();
+  fitToAllTracks();
+
+  document.getElementById('generateFromGpxBtn').disabled = false;
+  document.getElementById('exportCreatedJsonBtn').disabled = false;
 };
 
 /* ========================
-   GPX CREATION HANDLERS
+   REGENERATE POINTS (current track)
 ======================== */
-document.getElementById('gpxInput').onchange = async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-
-  const gpxText = await f.text();
-  loadedGpxTrack = parseGpxFile(gpxText);
-
-  if (loadedGpxTrack) {
-    document.getElementById('generateFromGpxBtn').disabled = false;
-    const trackLength = turf.length(loadedGpxTrack);
-    console.log(`GPX loaded: ${loadedGpxTrack.geometry.coordinates.length} track points, ${trackLength.toFixed(2)} km`);
-  } else {
-    document.getElementById('generateFromGpxBtn').disabled = true;
-  }
-};
-
 document.getElementById('generateFromGpxBtn').onclick = () => {
-  if (!loadedGpxTrack) return;
-
-  if (rawPoints.length > 0 || blueMarkers.length > 0) {
-    if (!confirm('This will clear existing data. Continue?')) {
-      return;
-    }
-    clearAll();
-  }
+  const track = getCurrentTrack();
+  if (!track || !track.gpxLine) return;
 
   const numPoints = parseInt(document.getElementById('numPointsInput').value) || 10;
   if (numPoints < 2) {
@@ -1476,20 +1758,32 @@ document.getElementById('generateFromGpxBtn').onclick = () => {
     return;
   }
 
-  const generatedPoints = generatePointsFromGpx(loadedGpxTrack, numPoints);
+  // Clear existing editing state for this track
+  track.redMarkers.forEach(m => m.marker.remove());
+  track.redMarkers = [];
+  track.controlPointMarkers.forEach(m => m.remove());
+  track.controlPointMarkers = [];
+  track.controlPoints = [];
+  if (map.getLayer(`red-track-${track.id}`)) map.removeLayer(`red-track-${track.id}`);
+  if (map.getSource(`red-track-${track.id}`)) map.removeSource(`red-track-${track.id}`);
+  track.redTrackLine = null;
 
-  if (generatedPoints.length > 0) {
-    processRawPoints(generatedPoints);
-    document.getElementById('exportCreatedJsonBtn').disabled = false;
-    console.log(`Generated ${generatedPoints.length} points from GPX`);
-  }
+  const points = generatePointsFromGpx(track.gpxLine, numPoints);
+  track.rawPoints = points;
+  processRawPoints(track);
+  updateTracksList();
+
+  document.getElementById('projectPointsBtn').disabled = true;
+  document.getElementById('exportBtn').disabled = true;
+  document.getElementById('exportGpxBtn').disabled = true;
 };
 
 document.getElementById('exportCreatedJsonBtn').onclick = () => {
-  if (rawPoints.length === 0) return;
+  const track = getCurrentTrack();
+  if (!track || track.rawPoints.length === 0) return;
 
   const exportData = {
-    points: rawPoints.map(p => ({
+    points: track.rawPoints.map(p => ({
       index: p.index,
       lat: p.lat,
       lon: p.lon
@@ -1499,65 +1793,107 @@ document.getElementById('exportCreatedJsonBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'blue_points.json';
+  a.download = `${track.name}_blue_points.json`;
   a.click();
 };
 
-document.getElementById('imagesInput').onchange = (ev) => {
-  let loadedCount = 0;
-  Array.from(ev.target.files).forEach(f => {
-    if (f.name.startsWith('.')) return;
-    if (!/\.(jpg|jpeg|png)$/i.test(f.name)) return;
+/* ========================
+   JSON LOAD (creates new track)
+======================== */
+document.getElementById('jsonInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
 
-    const m = f.name.match(/(\d+)\.[^.]+$/);
-    if (m) {
-      imagesByIndex[parseInt(m[1])] = URL.createObjectURL(f);
-      loadedCount++;
-    }
-  });
-  console.log(`Loaded ${loadedCount} images`);
-  updateMarkerColors();
+  const data = JSON.parse(await f.text());
+  const name = f.name.replace(/\.json$/i, '');
+  const track = createTrackData(name);
+  track.rawPoints = data.points;
+  tracks.set(track.id, track);
+  processRawPoints(track);
 
-  // If already viewing a point, reload its image
-  if (currentIdx >= 0 && imagesByIndex[currentIdx]) {
-    loadImageToViewer(imagesByIndex[currentIdx]);
-  }
+  if (!currentTrackId) selectTrack(track.id);
+  else { selectTrack(track.id); }
+  updateTracksList();
+  fitToTrack();
 };
 
-function updateMarkerColors() {
-  blueMarkers.forEach((marker, idx) => {
-    const p = rawPoints[idx];
-    const el = marker.getElement();
-    el.style.backgroundColor = imagesByIndex[p.index] ? '#26a269' : '#2b6df6';
+/* ========================
+   IMAGE LOADING (multi-track aware)
+======================== */
+document.getElementById('imagesInput').onchange = (ev) => {
+  const files = Array.from(ev.target.files).filter(f =>
+    !f.name.startsWith('.') && /\.(jpg|jpeg|png)$/i.test(f.name)
+  );
+
+  if (files.length === 0) return;
+
+  // Multi-track pattern: {trackname}{tracknum}-{imagenum}.ext
+  // e.g., senterra1-5.jpg → track "senterra1", image 5
+  const trackPattern = /^(.+?)(\d+)-(\d+)\.[^.]+$/;
+  let multiCount = 0;
+  let singleCount = 0;
+
+  files.forEach(f => {
+    const multiMatch = f.name.match(trackPattern);
+    if (multiMatch) {
+      const trackName = multiMatch[1] + multiMatch[2];
+      const imageNum = parseInt(multiMatch[3]);
+      const track = findTrackByName(trackName);
+      if (track) {
+        track.imagesByIndex[imageNum] = URL.createObjectURL(f);
+        multiCount++;
+        return;
+      }
+    }
+
+    // Fallback: simple number → assign to current track
+    const simpleMatch = f.name.match(/(\d+)\.[^.]+$/);
+    if (simpleMatch) {
+      const ct = getCurrentTrack();
+      if (ct) {
+        ct.imagesByIndex[parseInt(simpleMatch[1])] = URL.createObjectURL(f);
+        singleCount++;
+      }
+    }
   });
 
-  const imageCount = rawPoints.filter(p => imagesByIndex[p.index]).length;
-  document.getElementById('blueCount').innerText = `${blueMarkers.length} (${imageCount} imgs)`;
-}
+  console.log(`Loaded images: ${multiCount} multi-track, ${singleCount} single-track`);
+
+  // Update all track marker colors
+  tracks.forEach(track => updateMarkerColors(track));
+  updateTracksList();
+  updateStatus();
+
+  // Reload current viewer image if available
+  const ct = getCurrentTrack();
+  if (ct && currentIdx >= 0 && ct.imagesByIndex[currentIdx]) {
+    loadImageToViewer(ct.imagesByIndex[currentIdx]);
+  }
+};
 
 /* ========================
    CLEAR ALL
 ======================== */
 function clearAll() {
-  rawPoints = [];
-  imagesByIndex = {};
+  // Remove all track map layers and markers
+  tracks.forEach((track, trackId) => {
+    if (map.getLayer(`blue-track-${trackId}`)) map.removeLayer(`blue-track-${trackId}`);
+    if (map.getSource(`blue-track-${trackId}`)) map.removeSource(`blue-track-${trackId}`);
+    if (map.getLayer(`red-track-${trackId}`)) map.removeLayer(`red-track-${trackId}`);
+    if (map.getSource(`red-track-${trackId}`)) map.removeSource(`red-track-${trackId}`);
+
+    track.blueMarkers.forEach(m => m.remove());
+    track.redMarkers.forEach(m => m.marker.remove());
+    track.controlPointMarkers.forEach(m => m.remove());
+
+    Object.values(track.imagesByIndex).forEach(url => {
+      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+    });
+  });
+
+  tracks.clear();
+  currentTrackId = null;
   currentIdx = -1;
-
-  blueMarkers.forEach(m => m.remove());
-  blueMarkers = [];
-
-  redMarkers.forEach(item => item.marker.remove());
-  redMarkers = [];
-
-  controlPointMarkers.forEach(m => m.remove());
-  controlPointMarkers = [];
-  controlPoints = [];
-  redTrackLine = null;
-
-  if (map.getLayer('blue-track')) map.removeLayer('blue-track');
-  if (map.getSource('blue-track')) map.removeSource('blue-track');
-  if (map.getLayer('red-track')) map.removeLayer('red-track');
-  if (map.getSource('red-track')) map.removeSource('red-track');
 
   // Clean up Three.js
   if (sphere) {
@@ -1585,6 +1921,7 @@ function clearAll() {
   document.getElementById('exportGpxBtn').disabled = true;
   document.getElementById('dragMode').disabled = true;
   document.getElementById('exportCreatedJsonBtn').disabled = true;
+  document.getElementById('generateFromGpxBtn').disabled = true;
 
   addCPModeActive = false;
   removeCPModeActive = false;
@@ -1596,37 +1933,41 @@ function clearAll() {
   document.getElementById('removePointMode').checked = false;
 
   hideViewCone();
+  updateTracksList();
   updateStatus();
 }
 
 document.getElementById('clearAllBtn').onclick = clearAll;
 
 /* ========================
-   IMPORT FULL SESSION
+   IMPORT RED PATH (creates new track)
 ======================== */
 document.getElementById('importRedInput').onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
 
   const data = JSON.parse(await f.text());
-
-  clearAll();
+  const name = f.name.replace(/\.json$/i, '');
+  const track = createTrackData(name);
 
   if (data.rawPoints && data.rawPoints.length > 0) {
     data.rawPoints.forEach(p => {
       if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
-        imagesByIndex[p.index] = p.imageUrl;
+        track.imagesByIndex[p.index] = p.imageUrl;
       }
     });
-
-    processRawPoints(data.rawPoints);
+    track.rawPoints = data.rawPoints;
   }
+
+  tracks.set(track.id, track);
+  processRawPoints(track);
+  selectTrack(track.id);
 
   if (data.controlPoints && data.controlPoints.length > 0) {
     data.controlPoints.forEach(cp => {
-      createCPMarker([cp.lon, cp.lat]);
+      createCPMarker([cp.lon, cp.lat], track);
     });
-    updateRedTrackLine();
+    updateRedTrackLine(track);
     document.getElementById('showRedTrack').checked = true;
     document.getElementById('projectPointsBtn').disabled = false;
   }
@@ -1636,7 +1977,8 @@ document.getElementById('importRedInput').onchange = async (e) => {
       createRedMarker(
         [p.lon, p.lat],
         p.sequentialIndex,
-        p.originalImageIndex
+        p.originalImageIndex,
+        track
       );
     });
 
@@ -1646,6 +1988,7 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('exportGpxBtn').disabled = false;
   }
 
+  updateTracksList();
   updateStatus();
 };
 
