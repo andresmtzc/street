@@ -380,7 +380,7 @@
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
         <label style="font-size:10px; font-weight:bold; color:#ff4444;">IMPORT RED PATH</label>
-        <input id="importRedInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
+        <input id="importRedInput" type="file" accept=".json" multiple style="font-size:11px; max-width: 180px;"/>
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
         <label style="font-size:10px; font-weight:bold; color:#1fb6ff;">LOCAL IMAGES</label>
@@ -2628,63 +2628,73 @@ document.getElementById('clearAllBtn').onclick = clearAll;
    IMPORT RED PATH (creates new track)
 ======================== */
 document.getElementById('importRedInput').onchange = async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
 
-  const data = JSON.parse(await f.text());
-  const name = f.name.replace(/\.json$/i, '');
-  const track = createTrackData(name);
+  let lastTrackId = null;
 
-  if (data.rawPoints && data.rawPoints.length > 0) {
-    data.rawPoints.forEach(p => {
-      if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
-        track.imagesByIndex[p.index] = p.imageUrl;
-      }
-    });
-    track.rawPoints = data.rawPoints;
-  }
+  for (const f of files) {
+    const data = JSON.parse(await f.text());
+    const name = f.name.replace(/\.json$/i, '');
+    const track = createTrackData(name);
 
-  tracks.set(track.id, track);
-  processRawPoints(track);
-  selectTrack(track.id);
-
-  if (data.controlPoints && data.controlPoints.length > 0) {
-    data.controlPoints.forEach(cp => {
-      createCPMarker([cp.lon, cp.lat], track);
-    });
-    updateRedTrackLine(track);
-    document.getElementById('showRedTrack').checked = true;
-    document.getElementById('projectPointsBtn').disabled = false;
-  }
-
-  if (data.redMarkers && data.redMarkers.length > 0) {
-    data.redMarkers.forEach((p, idx) => {
-      const isEndpoint = (idx === 0 || idx === data.redMarkers.length - 1);
-      track.redMarkers.push({
-        lon: p.lon,
-        lat: p.lat,
-        sequentialIndex: p.sequentialIndex,
-        imageIndex: p.originalImageIndex,
-        distanceAlongRoute: p.distanceAlongRoute || 0,
-        isLocked: p.isLocked !== undefined ? p.isLocked : isEndpoint
+    if (data.rawPoints && data.rawPoints.length > 0) {
+      data.rawPoints.forEach(p => {
+        if (p.imageUrl && !p.imageUrl.startsWith('blob:')) {
+          track.imagesByIndex[p.index] = p.imageUrl;
+        }
       });
-    });
+      track.rawPoints = data.rawPoints;
+    }
 
-    updateRedMarkersSource();
+    tracks.set(track.id, track);
+    processRawPoints(track);
 
-    document.getElementById('showRedDots').checked = true;
-    document.getElementById('dragMode').disabled = false;
-    document.getElementById('exportBtn').disabled = false;
-    document.getElementById('exportGpxBtn').disabled = false;
+    if (data.controlPoints && data.controlPoints.length > 0) {
+      data.controlPoints.forEach(cp => {
+        createCPMarker([cp.lon, cp.lat], track);
+      });
+      updateRedTrackLine(track);
+    }
+
+    if (data.redMarkers && data.redMarkers.length > 0) {
+      data.redMarkers.forEach((p, idx) => {
+        const isEndpoint = (idx === 0 || idx === data.redMarkers.length - 1);
+        track.redMarkers.push({
+          lon: p.lon,
+          lat: p.lat,
+          sequentialIndex: p.sequentialIndex,
+          imageIndex: p.originalImageIndex,
+          distanceAlongRoute: p.distanceAlongRoute || 0,
+          isLocked: p.isLocked !== undefined ? p.isLocked : isEndpoint
+        });
+      });
+    }
+
+    // Load marriages if present
+    if (data.marriages && Array.isArray(data.marriages)) {
+      data.marriages.forEach(group => {
+        marriageGroups.push(group);
+      });
+    }
+
+    lastTrackId = track.id;
   }
 
-  // Load marriages if present
-  if (data.marriages && Array.isArray(data.marriages)) {
-    // Merge imported marriages with existing ones
-    data.marriages.forEach(group => {
-      marriageGroups.push(group);
-    });
-  }
+  // Update sources once after all files are loaded
+  updateRedMarkersSource();
+  updateBlueMarkersSource();
+
+  // Enable relevant UI
+  document.getElementById('showRedTrack').checked = true;
+  document.getElementById('showRedDots').checked = true;
+  document.getElementById('dragMode').disabled = false;
+  document.getElementById('exportBtn').disabled = false;
+  document.getElementById('exportGpxBtn').disabled = false;
+  document.getElementById('projectPointsBtn').disabled = false;
+
+  // Select the last imported track
+  if (lastTrackId) selectTrack(lastTrackId);
 
   updateTracksList();
   updateStatus();
