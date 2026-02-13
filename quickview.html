@@ -2254,15 +2254,17 @@ function initConeSystem() {
       data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] } }
     });
 
+    const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
+
     map.addLayer({
       id: 'view-cone-fill', type: 'fill', source: 'view-cone',
       paint: { 'fill-color': '#ff8400', 'fill-opacity': 0.5 }
-    });
+    }, beforeLayer);
 
     map.addLayer({
       id: 'view-cone-outline', type: 'line', source: 'view-cone',
       paint: { 'line-color': '#ff6b6b', 'line-width': 2, 'line-opacity': 0 }
-    });
+    }, beforeLayer);
   }
 }
 
@@ -2798,8 +2800,8 @@ document.getElementById('importRedInput').onchange = async (e) => {
    INIT ON MAP LOAD
 ======================== */
 map.on('load', () => {
-  initConeSystem();
   initMarkerLayers();
+  initConeSystem();
   setupMarkerEvents();
 });
 
