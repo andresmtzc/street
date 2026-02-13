@@ -2841,9 +2841,9 @@ document.getElementById('loadOverlayBtn').addEventListener('click', function() {
   if (map.getSource('drone-overlay')) map.removeSource('drone-overlay');
 
   map.addSource('drone-overlay', { type: 'image', url: url, coordinates: coordinates });
-  // Find the first custom layer to insert below all dots/tracks
-  const firstLayer = map.getStyle().layers.find(l => l.id === 'blue-markers-layer');
-  map.addLayer({ id: 'drone-overlay-layer', type: 'raster', source: 'drone-overlay', paint: { 'raster-opacity': 0.8 } }, firstLayer ? 'blue-markers-layer' : undefined);
+  // Insert below cone so stacking is: drone-overlay → cone → markers
+  const beforeLayer = map.getLayer('view-cone-fill') ? 'view-cone-fill' : (map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined);
+  map.addLayer({ id: 'drone-overlay-layer', type: 'raster', source: 'drone-overlay', paint: { 'raster-opacity': 0.8 } }, beforeLayer);
 
   document.getElementById('overlayControls').style.display = 'block';
   document.getElementById('removeOverlayBtn').style.display = '';
