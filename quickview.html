@@ -2606,11 +2606,12 @@ document.getElementById('imagesInput').onchange = (ev) => {
       if (track) {
         track.imagesByIndex[imageNum] = URL.createObjectURL(f);
         multiCount++;
-        return;
       }
+      // Multi-track pattern matched but track not loaded — skip (don't fallback)
+      return;
     }
 
-    // Fallback: simple number -> assign to current track
+    // Fallback: simple number -> assign to current track (only for non-multi-track filenames)
     const simpleMatch = f.name.match(/(\d+)\.[^.]+$/);
     if (simpleMatch) {
       const ct = getCurrentTrack();
