@@ -1302,8 +1302,8 @@ function processRawPoints(track) {
   if (map.getLayer(`blue-track-${track.id}`)) map.removeLayer(`blue-track-${track.id}`);
   if (map.getSource(`blue-track-${track.id}`)) map.removeSource(`blue-track-${track.id}`);
 
-  // Draw Blue Track line with track color (below marker layers)
-  const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
+  // Draw Blue Track line with track color (below cone, above drone overlay)
+  const beforeLayer = map.getLayer('view-cone-fill') ? 'view-cone-fill' : (map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined);
   map.addSource(`blue-track-${track.id}`, {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: track.rawPoints.map(p => [p.lon, p.lat]) } }
@@ -1401,7 +1401,7 @@ function updateRedTrackLine(track) {
   if (map.getLayer(layerId)) map.removeLayer(layerId);
   if (map.getSource(sourceId)) map.removeSource(sourceId);
 
-  const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
+  const beforeLayer = map.getLayer('view-cone-fill') ? 'view-cone-fill' : (map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined);
   map.addSource(sourceId, {
     type: 'geojson',
     data: { type: 'Feature', geometry: { type: 'LineString', coordinates: smoothCurve } }
@@ -2841,9 +2841,12 @@ document.getElementById('loadOverlayBtn').addEventListener('click', function() {
   if (map.getSource('drone-overlay')) map.removeSource('drone-overlay');
 
   map.addSource('drone-overlay', { type: 'image', url: url, coordinates: coordinates });
-  // Find the first custom layer to insert below all dots/tracks
-  const firstLayer = map.getStyle().layers.find(l => l.id === 'blue-markers-layer');
-  map.addLayer({ id: 'drone-overlay-layer', type: 'raster', source: 'drone-overlay', paint: { 'raster-opacity': 0.8 } }, firstLayer ? 'blue-markers-layer' : undefined);
+  // Insert at bottom of custom layers: drone-overlay → tracks → cone → markers
+  // Find the lowest custom layer (any track line, cone, or marker layer)
+  const allLayers = map.getStyle().layers;
+  const customIds = new Set(['view-cone-fill', 'view-cone-outline', 'blue-markers-layer', 'blue-markers-labels', 'blue-markers-click', 'red-markers-layer', 'red-markers-labels', 'red-markers-click']);
+  const firstCustom = allLayers.find(l => customIds.has(l.id) || l.id.startsWith('blue-track-') || l.id.startsWith('red-track-'));
+  map.addLayer({ id: 'drone-overlay-layer', type: 'raster', source: 'drone-overlay', paint: { 'raster-opacity': 0.8 } }, firstCustom ? firstCustom.id : undefined);
 
   document.getElementById('overlayControls').style.display = 'block';
   document.getElementById('removeOverlayBtn').style.display = '';
