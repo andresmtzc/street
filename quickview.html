@@ -311,6 +311,10 @@
           <input type="checkbox" id="removeCPMode">
           <label for="removeCPMode">Remove CP Mode</label>
         </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="moveAllCPs">
+          <label for="moveAllCPs">Move All CPs</label>
+        </div>
       </div>
     </div>
 
@@ -447,6 +451,7 @@ let preloadedImages = {};
 // Mode State
 let addCPModeActive = false;
 let removeCPModeActive = false;
+let moveAllCPsActive = false;
 let dragModeActive = false;
 let removePointModeActive = false;
 let lockModeActive = false;
@@ -1370,9 +1375,32 @@ function createCPMarker(lngLat, track, insertIndex) {
     }
   };
 
-  marker.on('dragstart', () => saveUndoState(track, 'drag CP'));
-  marker.on('drag', () => updateRedTrackLine(track));
+  let _dragStartPositions = null;
+  let _dragStartSelf = null;
+
+  marker.on('dragstart', () => {
+    saveUndoState(track, 'drag CP');
+    if (moveAllCPsActive) {
+      _dragStartSelf = marker.getLngLat();
+      _dragStartPositions = track.controlPointMarkers.map(m => m.getLngLat());
+    }
+  });
+  marker.on('drag', () => {
+    if (moveAllCPsActive && _dragStartPositions) {
+      const now = marker.getLngLat();
+      const dLng = now.lng - _dragStartSelf.lng;
+      const dLat = now.lat - _dragStartSelf.lat;
+      track.controlPointMarkers.forEach((m, i) => {
+        if (m !== marker) {
+          m.setLngLat([_dragStartPositions[i].lng + dLng, _dragStartPositions[i].lat + dLat]);
+        }
+      });
+    }
+    updateRedTrackLine(track);
+  });
   marker.on('dragend', () => {
+    _dragStartPositions = null;
+    _dragStartSelf = null;
     updateRedTrackLine(track);
     if (track.rawPoints.length > 0 && track.redMarkers.length > 0) {
       projectPointsToRed(track);
@@ -1593,6 +1621,10 @@ document.getElementById('removeCPMode').onchange = (e) => {
   removeCPModeActive = e.target.checked;
   addCPModeActive = false; document.getElementById('addCPMode').checked = false;
   map.getCanvas().style.cursor = '';
+};
+
+document.getElementById('moveAllCPs').onchange = (e) => {
+  moveAllCPsActive = e.target.checked;
 };
 
 document.getElementById('dragMode').onchange = (e) => {
@@ -2107,7 +2139,7 @@ function setupViewerEventListeners() {
       const deltaY = e.clientY - lastY;
 
       currentYaw -= deltaX * 0.01;
-      currentPitch += deltaY * 0.01;
+      currentPitch -= deltaY * 0.01;
       currentPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, currentPitch));
 
       sphere.rotation.y = currentYaw + currentYawFix;
@@ -2199,7 +2231,7 @@ function setupTouchGestures(canvas) {
       const deltaY = e.touches[0].clientY - lastTouchY;
 
       currentYaw -= deltaX * 0.01;
-      currentPitch += deltaY * 0.01;
+      currentPitch -= deltaY * 0.01;
       currentPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, currentPitch));
 
       sphere.rotation.y = currentYaw + currentYawFix;
@@ -2626,8 +2658,29 @@ document.getElementById('imagesInput').onchange = (ev) => {
 
   console.log(`Loaded images: ${multiCount} multi-track, ${singleCount} single-track`);
 
+  // Regenerate points on each track to match its image count
+  tracks.forEach(track => {
+    const imageCount = Object.keys(track.imagesByIndex).length;
+    if (imageCount >= 2 && track.gpxLine) {
+      // Clear existing editing state
+      track.redMarkers = [];
+      track.controlPointMarkers.forEach(m => m.remove());
+      track.controlPointMarkers = [];
+      track.controlPoints = [];
+      if (map.getLayer(`red-track-${track.id}`)) map.removeLayer(`red-track-${track.id}`);
+      if (map.getSource(`red-track-${track.id}`)) map.removeSource(`red-track-${track.id}`);
+      track.redTrackLine = null;
+
+      const points = generatePointsFromGpx(track.gpxLine, imageCount);
+      track.rawPoints = points;
+      processRawPoints(track);
+      console.log(`Regenerated ${track.name}: ${imageCount} points from ${imageCount} images`);
+    }
+  });
+
   // Update marker source to refresh hasImage property
   updateBlueMarkersSource();
+  updateRedMarkersSource();
   updateTracksList();
   updateStatus();
 
@@ -2698,6 +2751,7 @@ function clearAll() {
 
   addCPModeActive = false;
   removeCPModeActive = false;
+  moveAllCPsActive = false;
   dragModeActive = false;
   removePointModeActive = false;
   lockModeActive = false;
@@ -2706,6 +2760,7 @@ function clearAll() {
   marriageGroups = [];
   document.getElementById('addCPMode').checked = false;
   document.getElementById('removeCPMode').checked = false;
+  document.getElementById('moveAllCPs').checked = false;
   document.getElementById('dragMode').checked = false;
   document.getElementById('removePointMode').checked = false;
   document.getElementById('lockMode').checked = false;
