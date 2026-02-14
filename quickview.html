@@ -2798,6 +2798,11 @@ function clearAll() {
   redoStack.length = 0;
   updateUndoUI();
 
+  // Reset file inputs so re-selecting the same file triggers onchange
+  document.getElementById('gpxInput').value = '';
+  document.getElementById('imagesInput').value = '';
+  document.getElementById('importRedInput').value = '';
+
   hideViewCone();
   updateTracksList();
   updateStatus();
