@@ -440,7 +440,7 @@ let currentIdx = -1;
 
 // Three.js Viewer State
 let scene, camera, renderer, sphere, panoGroup;
-let currentYaw = 0, currentPitch = 0, currentFov = 75;
+let currentYaw = 0, currentPitch = 0, currentFov = 75, currentYawFix = 0;
 let viewerInitialized = false;
 let preloadedImages = {};
 
@@ -1137,8 +1137,9 @@ function selectTrack(trackId) {
   // Sync yaw fix slider to this track
   document.getElementById('yawFixSlider').value = track.yawFix || 0;
   document.getElementById('yawFixValue').textContent = `${track.yawFix || 0}°`;
-  if (panoGroup) {
-    panoGroup.rotation.y = THREE.MathUtils.degToRad(track.yawFix || 0);
+  currentYawFix = THREE.MathUtils.degToRad(track.yawFix || 0);
+  if (sphere) {
+    sphere.rotation.y = currentYaw + currentYawFix;
   }
 
   // Reset modes
@@ -1575,8 +1576,9 @@ document.getElementById('yawFixSlider').oninput = (e) => {
   if (track) {
     track.yawFix = deg;
   }
-  if (panoGroup) {
-    panoGroup.rotation.y = THREE.MathUtils.degToRad(deg);
+  currentYawFix = THREE.MathUtils.degToRad(deg);
+  if (sphere) {
+    sphere.rotation.y = currentYaw + currentYawFix;
   }
 };
 
@@ -1999,7 +2001,7 @@ function applyImageToSphere(img) {
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
   sphere = new THREE.Mesh(geometry, material);
 
-  sphere.rotation.y = currentYaw;
+  sphere.rotation.y = currentYaw + currentYawFix;
   sphere.rotation.x = currentPitch;
 
   panoGroup.add(sphere);
@@ -2104,12 +2106,12 @@ function setupViewerEventListeners() {
       const deltaX = e.clientX - lastX;
       const deltaY = e.clientY - lastY;
 
-      sphere.rotation.y -= deltaX * 0.01;
-      sphere.rotation.x += deltaY * 0.01;
-      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+      currentYaw -= deltaX * 0.01;
+      currentPitch += deltaY * 0.01;
+      currentPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, currentPitch));
 
-      currentYaw = sphere.rotation.y;
-      currentPitch = sphere.rotation.x;
+      sphere.rotation.y = currentYaw + currentYawFix;
+      sphere.rotation.x = currentPitch;
 
       lastX = e.clientX;
       lastY = e.clientY;
@@ -2196,12 +2198,12 @@ function setupTouchGestures(canvas) {
       const deltaX = e.touches[0].clientX - lastTouchX;
       const deltaY = e.touches[0].clientY - lastTouchY;
 
-      sphere.rotation.y -= deltaX * 0.01;
-      sphere.rotation.x += deltaY * 0.01;
-      sphere.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, sphere.rotation.x));
+      currentYaw -= deltaX * 0.01;
+      currentPitch += deltaY * 0.01;
+      currentPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, currentPitch));
 
-      currentYaw = sphere.rotation.y;
-      currentPitch = sphere.rotation.x;
+      sphere.rotation.y = currentYaw + currentYawFix;
+      sphere.rotation.x = currentPitch;
 
       lastTouchX = e.touches[0].clientX;
       lastTouchY = e.touches[0].clientY;
@@ -2678,6 +2680,7 @@ function clearAll() {
   currentYaw = 0;
   currentPitch = 0;
   currentFov = 75;
+  currentYawFix = 0;
   preloadedImages = {};
 
   document.getElementById('empty-msg').style.display = 'flex';
