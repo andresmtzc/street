@@ -1377,12 +1377,38 @@ function createCPMarker(lngLat, track, insertIndex) {
 
   let _dragStartPositions = null;
   let _dragStartSelf = null;
+  let _preDragSnapshot = null;
+
+  // Capture true pre-drag positions BEFORE mapbox moves anything
+  const capturePreDrag = () => {
+    _dragStartSelf = marker.getLngLat();
+    _dragStartPositions = track.controlPointMarkers.map(m => m.getLngLat());
+    _preDragSnapshot = {
+      trackId: track.id,
+      action: 'drag CP',
+      controlPointPositions: track.controlPointMarkers.map(m => {
+        const ll = m.getLngLat(); return [ll.lng, ll.lat];
+      }),
+      redMarkers: track.redMarkers.map(m => ({
+        lon: m.lon, lat: m.lat,
+        sequentialIndex: m.sequentialIndex, imageIndex: m.imageIndex,
+        distanceAlongRoute: m.distanceAlongRoute, isLocked: m.isLocked || false
+      }))
+    };
+  };
+  el.addEventListener('mousedown', capturePreDrag);
+  el.addEventListener('touchstart', capturePreDrag);
 
   marker.on('dragstart', () => {
-    saveUndoState(track, 'drag CP');
-    if (moveAllCPsActive) {
-      _dragStartSelf = marker.getLngLat();
-      _dragStartPositions = track.controlPointMarkers.map(m => m.getLngLat());
+    // Push the snapshot captured at mousedown (true pre-drag state)
+    if (_preDragSnapshot) {
+      undoStack.push(_preDragSnapshot);
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      redoStack.length = 0;
+      updateUndoUI();
+      _preDragSnapshot = null;
+    } else {
+      saveUndoState(track, 'drag CP');
     }
   });
   marker.on('drag', () => {
@@ -1401,6 +1427,7 @@ function createCPMarker(lngLat, track, insertIndex) {
   marker.on('dragend', () => {
     _dragStartPositions = null;
     _dragStartSelf = null;
+    _preDragSnapshot = null;
     updateRedTrackLine(track);
     if (track.rawPoints.length > 0 && track.redMarkers.length > 0) {
       projectPointsToRed(track);
@@ -2864,9 +2891,10 @@ map.on('load', () => {
   setupMarkerEvents();
 });
 
-// Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo
+// Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
     e.preventDefault();
     redo();
@@ -2876,6 +2904,18 @@ document.addEventListener('keydown', (e) => {
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
     e.preventDefault();
     redo();
+  } else if (e.key === 'd') {
+    const cb = document.getElementById('dragMode');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
+  } else if (e.key === 'l') {
+    const cb = document.getElementById('lockMode');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
+  } else if (e.key === 'm') {
+    const cb = document.getElementById('moveAllCPs');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
   }
 });
 
