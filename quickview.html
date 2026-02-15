@@ -2921,6 +2921,10 @@ document.addEventListener('keydown', (e) => {
     const cb = document.getElementById('moveAllCPs');
     cb.checked = !cb.checked;
     cb.onchange({ target: cb });
+  } else if (e.key === 'r') {
+    const cb = document.getElementById('marryMode');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
   }
 });
 
