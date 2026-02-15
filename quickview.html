@@ -362,6 +362,10 @@
       <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
       <button class="btn" id="exportGpxBtn" disabled style="background: linear-gradient(135deg, #26a269 0%, #1a7f4f 100%);">Export GPX</button>
       <button class="btn" id="exportIndexBtn" style="background: linear-gradient(135deg, #9b59b6 0%, #6c3483 100%); margin-top:2px;">Export Index</button>
+      <div style="display:flex; flex-direction:column; gap:2px; margin-top:2px;">
+        <label style="font-size:10px; font-weight:bold; color:#9b59b6;">IMPORT INDEX</label>
+        <input id="importIndexInput" type="file" accept=".json" style="font-size:11px; max-width: 180px;"/>
+      </div>
     </div>
 
     <div class="panel-section">
@@ -2567,6 +2571,34 @@ document.getElementById('exportIndexBtn').onclick = () => {
 };
 
 /* ========================
+   INDEX JSON IMPORT (marriages)
+======================== */
+document.getElementById('importIndexInput').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const indexData = JSON.parse(await file.text());
+
+  if (indexData.marriages && Array.isArray(indexData.marriages)) {
+    // Convert from portable format "trackName.gpx:imageIndex" → internal "trackName:imageIndex"
+    indexData.marriages.forEach(group => {
+      const converted = group.map(key => {
+        // "sierraalta0.gpx:142" → "sierraalta0:142"
+        return key.replace(/\.gpx:/i, ':');
+      });
+      if (converted.length >= 2) {
+        marriageGroups.push(converted);
+      }
+    });
+
+    updateRedMarkersSource();
+    updateStatus();
+  }
+
+  e.target.value = '';
+};
+
+/* ========================
    GPX LOADING (multi-file)
 ======================== */
 document.getElementById('gpxInput').onchange = async (e) => {
@@ -2861,6 +2893,13 @@ document.getElementById('importRedInput').onchange = async (e) => {
       updateRedMarkersSource();
     }
 
+    // Load marriages if present
+    if (data.marriages && Array.isArray(data.marriages)) {
+      data.marriages.forEach(group => {
+        marriageGroups.push(group);
+      });
+    }
+
     lastTrack = track;
   }
 
@@ -2872,14 +2911,6 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('dragMode').disabled = false;
     document.getElementById('exportBtn').disabled = false;
     document.getElementById('exportGpxBtn').disabled = false;
-  }
-
-  // Load marriages if present
-  if (data.marriages && Array.isArray(data.marriages)) {
-    // Merge imported marriages with existing ones
-    data.marriages.forEach(group => {
-      marriageGroups.push(group);
-    });
   }
 
   updateTracksList();
@@ -2919,6 +2950,10 @@ document.addEventListener('keydown', (e) => {
     cb.onchange({ target: cb });
   } else if (e.key === 'm') {
     const cb = document.getElementById('moveAllCPs');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
+  } else if (e.key === 'r') {
+    const cb = document.getElementById('marryMode');
     cb.checked = !cb.checked;
     cb.onchange({ target: cb });
   }
