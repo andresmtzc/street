@@ -2861,6 +2861,13 @@ document.getElementById('importRedInput').onchange = async (e) => {
       updateRedMarkersSource();
     }
 
+    // Load marriages if present
+    if (data.marriages && Array.isArray(data.marriages)) {
+      data.marriages.forEach(group => {
+        marriageGroups.push(group);
+      });
+    }
+
     lastTrack = track;
   }
 
@@ -2872,14 +2879,6 @@ document.getElementById('importRedInput').onchange = async (e) => {
     document.getElementById('dragMode').disabled = false;
     document.getElementById('exportBtn').disabled = false;
     document.getElementById('exportGpxBtn').disabled = false;
-  }
-
-  // Load marriages if present
-  if (data.marriages && Array.isArray(data.marriages)) {
-    // Merge imported marriages with existing ones
-    data.marriages.forEach(group => {
-      marriageGroups.push(group);
-    });
   }
 
   updateTracksList();
