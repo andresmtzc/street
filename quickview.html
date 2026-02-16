@@ -1440,7 +1440,7 @@ function createCPMarker(lngLat, track, insertIndex) {
     _preDragSnapshot = null;
     updateRedTrackLine(track);
     if (track.rawPoints.length > 0 && track.redMarkers.length > 0) {
-      projectPointsToRed(track);
+      repositionRedMarkers(track);
     }
   });
 
@@ -1478,6 +1478,46 @@ function updateRedTrackLine(track) {
     paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
     layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
   }, beforeLayer);
+}
+
+/* ========================
+   REPOSITION EXISTING RED MARKERS (preserves deletions)
+======================== */
+function repositionRedMarkers(track) {
+  if (!track) track = getCurrentTrack();
+  if (!track || !track.redTrackLine || track.redMarkers.length === 0) return;
+
+  // Build a blue track line from the raw points that have corresponding red markers
+  const blueCoords = track.rawPoints.map(p => [p.lon, p.lat]);
+  if (blueCoords.length < 2) return;
+  const blueTrack = turf.lineString(blueCoords);
+  const blueLen = turf.length(blueTrack);
+  const redLen = turf.length(track.redTrackLine);
+
+  // Compute cumulative distances along blue track for each rawPoint by index
+  const blueDists = {};
+  let cumDist = 0;
+  track.rawPoints.forEach((p, idx) => {
+    if (idx > 0) {
+      const prev = track.rawPoints[idx - 1];
+      cumDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
+    }
+    blueDists[p.index] = cumDist;
+  });
+
+  // Reposition each existing red marker based on its imageIndex ratio
+  track.redMarkers.forEach(m => {
+    const d = blueDists[m.imageIndex];
+    if (d === undefined) return;
+    const ratio = blueLen > 0 ? d / blueLen : 0;
+    const distAlongRed = ratio * redLen;
+    const pt = turf.along(track.redTrackLine, distAlongRed);
+    m.lon = pt.geometry.coordinates[0];
+    m.lat = pt.geometry.coordinates[1];
+    m.distanceAlongRoute = distAlongRed;
+  });
+
+  updateRedMarkersSource();
 }
 
 /* ========================
