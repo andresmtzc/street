@@ -1438,9 +1438,10 @@ function createCPMarker(lngLat, track, insertIndex) {
     _dragStartPositions = null;
     _dragStartSelf = null;
     _preDragSnapshot = null;
+    const oldRedLen = track.redTrackLine ? turf.length(track.redTrackLine) : 0;
     updateRedTrackLine(track);
     if (track.rawPoints.length > 0 && track.redMarkers.length > 0) {
-      projectPointsToRed(track);
+      repositionRedMarkers(track, oldRedLen);
     }
   });
 
@@ -1478,6 +1479,55 @@ function updateRedTrackLine(track) {
     paint: { 'line-color': '#ff4444', 'line-width': 3, 'line-opacity': 0.8 },
     layout: { 'visibility': document.getElementById('showRedTrack').checked ? 'visible' : 'none' }
   }, beforeLayer);
+}
+
+/* ========================
+   REPOSITION EXISTING RED MARKERS (preserves deletions)
+======================== */
+function repositionRedMarkers(track, oldRedLen) {
+  if (!track) track = getCurrentTrack();
+  if (!track || !track.redTrackLine || track.redMarkers.length === 0) return;
+
+  const newRedLen = turf.length(track.redTrackLine);
+
+  // Build a blue track line from the raw points
+  const blueCoords = track.rawPoints.map(p => [p.lon, p.lat]);
+  if (blueCoords.length < 2) return;
+  const blueTrack = turf.lineString(blueCoords);
+  const blueLen = turf.length(blueTrack);
+
+  // Compute cumulative distances along blue track for each rawPoint by index
+  const blueDists = {};
+  let cumDist = 0;
+  track.rawPoints.forEach((p, idx) => {
+    if (idx > 0) {
+      const prev = track.rawPoints[idx - 1];
+      cumDist += turf.distance([prev.lon, prev.lat], [p.lon, p.lat]);
+    }
+    blueDists[p.index] = cumDist;
+  });
+
+  // Reposition each existing red marker
+  track.redMarkers.forEach(m => {
+    let distAlongRed;
+    if (m.isLocked && oldRedLen > 0) {
+      // Locked: preserve % position along the red line
+      const ratio = m.distanceAlongRoute / oldRedLen;
+      distAlongRed = ratio * newRedLen;
+    } else {
+      // Unlocked: reposition based on blue track ratio
+      const d = blueDists[m.imageIndex];
+      if (d === undefined) return;
+      const ratio = blueLen > 0 ? d / blueLen : 0;
+      distAlongRed = ratio * newRedLen;
+    }
+    const pt = turf.along(track.redTrackLine, distAlongRed);
+    m.lon = pt.geometry.coordinates[0];
+    m.lat = pt.geometry.coordinates[1];
+    m.distanceAlongRoute = distAlongRed;
+  });
+
+  updateRedMarkersSource();
 }
 
 /* ========================
