@@ -1010,8 +1010,6 @@ function setupMarkerEvents() {
         const idx = f.sequentialIndex;
         const m = track.redMarkers[idx];
         if (!m) return;
-        // Endpoints are always locked — can't unlock
-        if (idx === 0 || idx === track.redMarkers.length - 1) return;
         saveUndoState(track, 'toggle lock');
         m.isLocked = !m.isLocked;
         updateRedMarkersSource();
