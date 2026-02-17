@@ -367,12 +367,12 @@
         </div>
         <div class="checkbox-row">
           <input type="checkbox" id="antiMarryMode">
-          <label for="antiMarryMode" style="color:#FF6600; font-weight:bold;">Antimarry Mode</label>
+          <label for="antiMarryMode" style="color:#39FF14; font-weight:bold;">Antimarry Mode</label>
         </div>
         <div style="font-size: 10px; color: #666; padding-left: 28px;" id="antiMarryHelp">
           Click 2 red dots, uncheck to antimarry
         </div>
-        <div id="antiMarrySelectionInfo" style="font-size: 10px; color: #FF6600; padding-left: 28px; display:none;">
+        <div id="antiMarrySelectionInfo" style="font-size: 10px; color: #39FF14; padding-left: 28px; display:none;">
           Selected: <span id="antiMarrySelectionCount">0</span> pts
         </div>
       </div>
@@ -388,7 +388,7 @@
         <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
         <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
         <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
-        <div>Antimarriages: <span id="antiMarriageCount" style="color: #FF6600; font-weight: 600;">0</span></div>
+        <div>Antimarriages: <span id="antiMarriageCount" style="color: #39FF14; font-weight: 600;">0</span></div>
       </div>
     </div>
   </div>
@@ -961,7 +961,7 @@ function initMarkerLayers() {
       ],
       'circle-color': ['case',
         ['==', ['get', 'isActive'], true], '#00ffff',
-        ['==', ['get', 'isAntiMarrySelected'], true], '#FF6600',
+        ['==', ['get', 'isAntiMarrySelected'], true], '#39FF14',
         ['==', ['get', 'isMarrySelected'], true], '#00FFFF',
         ['==', ['get', 'isMarried'], true], ['get', 'marriageColor'],
         ['==', ['get', 'isLocked'], true], '#ffeb3b',
@@ -977,9 +977,9 @@ function initMarkerLayers() {
       ],
       'circle-stroke-color': ['case',
         ['==', ['get', 'isActive'], true], '#000000',
-        ['==', ['get', 'isAntiMarrySelected'], true], '#FF6600',
+        ['==', ['get', 'isAntiMarrySelected'], true], '#39FF14',
         ['==', ['get', 'isMarrySelected'], true], '#FF00FF',
-        ['==', ['get', 'isAntiMarried'], true], '#FF6600',
+        ['==', ['get', 'isAntiMarried'], true], '#39FF14',
         ['==', ['get', 'isMarried'], true], '#ffffff',
         '#ffffff'
       ]
