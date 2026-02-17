@@ -365,6 +365,16 @@
         <div id="marrySelectionInfo" style="font-size: 10px; color: #FF00FF; padding-left: 28px; display:none;">
           Selected: <span id="marrySelectionCount">0</span> pts
         </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="antiMarryMode">
+          <label for="antiMarryMode" style="color:#FF6600; font-weight:bold;">Antimarry Mode</label>
+        </div>
+        <div style="font-size: 10px; color: #666; padding-left: 28px;" id="antiMarryHelp">
+          Click 2 red dots, uncheck to antimarry
+        </div>
+        <div id="antiMarrySelectionInfo" style="font-size: 10px; color: #FF6600; padding-left: 28px; display:none;">
+          Selected: <span id="antiMarrySelectionCount">0</span> pts
+        </div>
       </div>
 
       <button class="btn btn-danger" id="exportBtn" disabled>Export JSON</button>
@@ -378,6 +388,7 @@
         <div>Blue Points: <span id="blueCount" style="color: #2b6df6; font-weight: 600;">0</span></div>
         <div>Red Points: <span id="projectedCount" style="color: #ff4444; font-weight: 600;">0</span></div>
         <div>Marriages: <span id="marriageCount" style="color: #FF00FF; font-weight: 600;">0</span></div>
+        <div>Antimarriages: <span id="antiMarriageCount" style="color: #FF6600; font-weight: 600;">0</span></div>
       </div>
     </div>
   </div>
@@ -470,8 +481,12 @@ let lockModeActive = false;
 let marryModeActive = false;
 let marrySelection = new Set(); // Set of "trackId:imageIndex" strings
 
+let antiMarryModeActive = false;
+let antiMarrySelection = new Set();
+
 // Marriage State
 let marriageGroups = []; // Array of arrays: [["track-1:5", "track-2:12"], ...]
+let antiMarriageGroups = []; // Array of pairs: [["track:85", "track:93"], ...]
 const marriageColors = [
   '#FF00FF', '#00FFFF', '#FFD700', '#FF6347', '#7B68EE',
   '#00FA9A', '#FF69B4', '#32CD32', '#FF4500', '#1E90FF',
@@ -810,6 +825,21 @@ function getMarkerMarriageInfo(key) {
   return { isMarried: false, groupIndex: -1, color: '#ff4444' };
 }
 
+function getMarkerAntiMarriageInfo(key) {
+  for (let i = 0; i < antiMarriageGroups.length; i++) {
+    if (antiMarriageGroups[i].includes(key)) {
+      return { isAntiMarried: true, groupIndex: i };
+    }
+  }
+  return { isAntiMarried: false, groupIndex: -1 };
+}
+
+function areAntiMarried(key1, key2) {
+  return antiMarriageGroups.some(pair =>
+    (pair[0] === key1 && pair[1] === key2) || (pair[0] === key2 && pair[1] === key1)
+  );
+}
+
 function updateRedMarkersSource() {
   if (!map.getSource('red-markers')) return;
 
@@ -820,6 +850,7 @@ function updateRedMarkersSource() {
     track.redMarkers.forEach((m) => {
       const key = markerKey(track.name, m.imageIndex);
       const mInfo = getMarkerMarriageInfo(key);
+      const amInfo = getMarkerAntiMarriageInfo(key);
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
@@ -831,8 +862,10 @@ function updateRedMarkersSource() {
           isActive: (track.id === currentTrackId && m.imageIndex === currentIdx),
           isLocked: m.isLocked || false,
           isMarrySelected: marrySelection.has(key),
+          isAntiMarrySelected: antiMarrySelection.has(key),
           isMarried: mInfo.isMarried,
-          marriageColor: mInfo.color
+          marriageColor: mInfo.color,
+          isAntiMarried: amInfo.isAntiMarried
         }
       });
     });
@@ -920,12 +953,15 @@ function initMarkerLayers() {
     paint: {
       'circle-radius': ['case',
         ['==', ['get', 'isActive'], true], 9,
+        ['==', ['get', 'isAntiMarrySelected'], true], 8,
         ['==', ['get', 'isMarrySelected'], true], 8,
+        ['==', ['get', 'isAntiMarried'], true], 8,
         ['==', ['get', 'isMarried'], true], 8,
         6
       ],
       'circle-color': ['case',
         ['==', ['get', 'isActive'], true], '#00ffff',
+        ['==', ['get', 'isAntiMarrySelected'], true], '#FF6600',
         ['==', ['get', 'isMarrySelected'], true], '#00FFFF',
         ['==', ['get', 'isMarried'], true], ['get', 'marriageColor'],
         ['==', ['get', 'isLocked'], true], '#ffeb3b',
@@ -933,13 +969,17 @@ function initMarkerLayers() {
       ],
       'circle-stroke-width': ['case',
         ['==', ['get', 'isActive'], true], 2,
+        ['==', ['get', 'isAntiMarrySelected'], true], 3,
         ['==', ['get', 'isMarrySelected'], true], 3,
+        ['==', ['get', 'isAntiMarried'], true], 3,
         ['==', ['get', 'isMarried'], true], 2,
         1.5
       ],
       'circle-stroke-color': ['case',
         ['==', ['get', 'isActive'], true], '#000000',
+        ['==', ['get', 'isAntiMarrySelected'], true], '#FF6600',
         ['==', ['get', 'isMarrySelected'], true], '#FF00FF',
+        ['==', ['get', 'isAntiMarried'], true], '#FF6600',
         ['==', ['get', 'isMarried'], true], '#ffffff',
         '#ffffff'
       ]
@@ -1004,6 +1044,18 @@ function setupMarkerEvents() {
       return;
     }
 
+    if (antiMarryModeActive) {
+      const key = f.markerKey;
+      if (antiMarrySelection.has(key)) {
+        antiMarrySelection.delete(key);
+      } else {
+        antiMarrySelection.add(key);
+      }
+      updateAntiMarrySelectionUI();
+      updateRedMarkersSource();
+      return;
+    }
+
     if (lockModeActive) {
       const track = getCurrentTrack();
       if (track) {
@@ -1034,7 +1086,7 @@ function setupMarkerEvents() {
     if (!addCPModeActive && !dragModeActive) map.getCanvas().style.cursor = '';
   });
   map.on('mouseenter', 'red-markers-click', () => {
-    if (marryModeActive) map.getCanvas().style.cursor = 'crosshair';
+    if (marryModeActive || antiMarryModeActive) map.getCanvas().style.cursor = 'crosshair';
     else if (dragModeActive) map.getCanvas().style.cursor = 'move';
     else if (lockModeActive) map.getCanvas().style.cursor = 'pointer';
     else if (removePointModeActive) map.getCanvas().style.cursor = 'not-allowed';
@@ -1704,6 +1756,7 @@ function updateControlsVisibility() {
 function updateStatus() {
   const ct = getCurrentTrack();
   document.getElementById('marriageCount').innerText = marriageGroups.length;
+  document.getElementById('antiMarriageCount').innerText = antiMarriageGroups.length;
   if (!ct) {
     document.getElementById('blueCount').innerText = '0';
     document.getElementById('projectedCount').innerText = '0';
@@ -1809,6 +1862,8 @@ document.getElementById('marryMode').onchange = (e) => {
     dragModeActive = false; document.getElementById('dragMode').checked = false;
     removePointModeActive = false; document.getElementById('removePointMode').checked = false;
     lockModeActive = false; document.getElementById('lockMode').checked = false;
+    antiMarryModeActive = false; document.getElementById('antiMarryMode').checked = false;
+    antiMarrySelection.clear(); updateAntiMarrySelectionUI();
   } else {
     // Turning OFF marry mode — commit the marriage or divorce
     marryModeActive = false;
@@ -1851,7 +1906,54 @@ function updateMarrySelectionUI() {
   }
 }
 
+document.getElementById('antiMarryMode').onchange = (e) => {
+  if (e.target.checked) {
+    antiMarryModeActive = true;
+    antiMarrySelection.clear();
+    updateAntiMarrySelectionUI();
+    // Disable conflicting modes
+    dragModeActive = false; document.getElementById('dragMode').checked = false;
+    removePointModeActive = false; document.getElementById('removePointMode').checked = false;
+    lockModeActive = false; document.getElementById('lockMode').checked = false;
+    marryModeActive = false; document.getElementById('marryMode').checked = false;
+    marrySelection.clear(); updateMarrySelectionUI();
+  } else {
+    // Turning OFF antimarry mode — commit antimarriage or divorce
+    antiMarryModeActive = false;
+    if (antiMarrySelection.size === 2) {
+      const keys = [...antiMarrySelection];
+      // Check if already antimarried — if so, divorce them
+      if (areAntiMarried(keys[0], keys[1])) {
+        divorceMarkerByKey(keys[0]);
+        divorceMarkerByKey(keys[1]);
+      } else {
+        antiMarriageGroups.push(keys);
+      }
+    } else if (antiMarrySelection.size === 1) {
+      // Single selection — divorce it if antimarried
+      const key = [...antiMarrySelection][0];
+      divorceMarkerByKey(key);
+    }
+    antiMarrySelection.clear();
+    updateAntiMarrySelectionUI();
+    updateRedMarkersSource();
+    updateStatus();
+  }
+};
+
+function updateAntiMarrySelectionUI() {
+  const info = document.getElementById('antiMarrySelectionInfo');
+  const count = document.getElementById('antiMarrySelectionCount');
+  if (antiMarryModeActive) {
+    info.style.display = 'block';
+    count.textContent = antiMarrySelection.size;
+  } else {
+    info.style.display = 'none';
+  }
+}
+
 function divorceMarkerByKey(key) {
+  let found = false;
   for (let i = 0; i < marriageGroups.length; i++) {
     const idx = marriageGroups[i].indexOf(key);
     if (idx !== -1) {
@@ -1859,10 +1961,18 @@ function divorceMarkerByKey(key) {
       if (marriageGroups[i].length < 2) {
         marriageGroups.splice(i, 1);
       }
-      return true;
+      found = true;
+      break;
     }
   }
-  return false;
+  // Also remove from antimarriage groups
+  for (let i = antiMarriageGroups.length - 1; i >= 0; i--) {
+    if (antiMarriageGroups[i].includes(key)) {
+      antiMarriageGroups.splice(i, 1);
+      found = true;
+    }
+  }
+  return found;
 }
 
 /* ========================
@@ -2020,10 +2130,19 @@ function getPrevPointPosition() {
   return null;
 }
 
+function isAntiMarriedNavigation(fromIndex, toIndex) {
+  const track = getCurrentTrack();
+  if (!track) return false;
+  const key1 = markerKey(track.name, fromIndex);
+  const key2 = markerKey(track.name, toIndex);
+  return areAntiMarried(key1, key2);
+}
+
 function navigateForward() {
   const pts = getActivePoints();
   const curPos = pts.findIndex(p => p.index === currentIdx);
   if (curPos >= 0 && curPos < pts.length - 1) {
+    if (isAntiMarriedNavigation(pts[curPos].index, pts[curPos + 1].index)) return;
     openViewer(pts[curPos + 1].index);
   }
 }
@@ -2032,6 +2151,7 @@ function navigateBackward() {
   const pts = getActivePoints();
   const curPos = pts.findIndex(p => p.index === currentIdx);
   if (curPos > 0) {
+    if (isAntiMarriedNavigation(pts[curPos].index, pts[curPos - 1].index)) return;
     openViewer(pts[curPos - 1].index);
   }
 }
@@ -2117,8 +2237,16 @@ function updateNavigationRing() {
   const pts = getActivePoints();
   const curPos = pts.findIndex(p => p.index === currentIdx);
 
-  const canForward = curPos >= 0 && curPos < pts.length - 1;
-  const canBackward = curPos > 0;
+  let canForward = curPos >= 0 && curPos < pts.length - 1;
+  let canBackward = curPos > 0;
+
+  // Block navigation at antimarried boundaries
+  if (canForward && isAntiMarriedNavigation(pts[curPos].index, pts[curPos + 1].index)) {
+    canForward = false;
+  }
+  if (canBackward && isAntiMarriedNavigation(pts[curPos].index, pts[curPos - 1].index)) {
+    canBackward = false;
+  }
 
   if (nextBtn) {
     nextBtn.style.opacity = canForward ? 1 : 0;
@@ -2610,7 +2738,8 @@ document.getElementById('exportBtn').onclick = () => {
       distanceAlongRoute: m.distanceAlongRoute,
       isLocked: m.isLocked || false
     })),
-    marriages: marriageGroups
+    marriages: marriageGroups,
+    antiMarriages: antiMarriageGroups
   };
 
   const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
@@ -2672,13 +2801,20 @@ document.getElementById('exportIndexBtn').onclick = () => {
   // Build marriages in portable format: "trackname.gpx:imageIndex"
   const marriages = marriageGroups.map(group =>
     group.map(key => {
-      // key is "trackName:imageIndex"
       const parts = key.split(':');
       return parts[0] + '.gpx:' + parts[1];
     })
   );
 
-  const indexData = { files, gpxFiles, yawfixes, marriages };
+  // Build antimarriages in portable format
+  const antiMarriages = antiMarriageGroups.map(pair =>
+    pair.map(key => {
+      const parts = key.split(':');
+      return parts[0] + '.gpx:' + parts[1];
+    })
+  );
+
+  const indexData = { files, gpxFiles, yawfixes, marriages, antiMarriages };
 
   const blob = new Blob([JSON.stringify(indexData, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -2708,6 +2844,17 @@ document.getElementById('importIndexInput').onchange = async (e) => {
       }
     });
 
+    updateRedMarkersSource();
+    updateStatus();
+  }
+
+  if (indexData.antiMarriages && Array.isArray(indexData.antiMarriages)) {
+    indexData.antiMarriages.forEach(pair => {
+      const converted = pair.map(key => key.replace(/\.gpx:/i, ':'));
+      if (converted.length === 2) {
+        antiMarriageGroups.push(converted);
+      }
+    });
     updateRedMarkersSource();
     updateStatus();
   }
@@ -3017,6 +3164,12 @@ document.getElementById('importRedInput').onchange = async (e) => {
       });
     }
 
+    if (data.antiMarriages && Array.isArray(data.antiMarriages)) {
+      data.antiMarriages.forEach(pair => {
+        antiMarriageGroups.push(pair);
+      });
+    }
+
     lastTrack = track;
   }
 
@@ -3071,6 +3224,10 @@ document.addEventListener('keydown', (e) => {
     cb.onchange({ target: cb });
   } else if (e.key === 'r') {
     const cb = document.getElementById('marryMode');
+    cb.checked = !cb.checked;
+    cb.onchange({ target: cb });
+  } else if (e.key === 't') {
+    const cb = document.getElementById('antiMarryMode');
     cb.checked = !cb.checked;
     cb.onchange({ target: cb });
   }
