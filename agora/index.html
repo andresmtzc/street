@@ -1039,7 +1039,7 @@ async function loadGPXFromManifest() {
         // Merge anti-marriages if present
         if (manifest.antiMarriages && Array.isArray(manifest.antiMarriages)) {
           antiMarriageGroups = antiMarriageGroups.concat(manifest.antiMarriages);
-          console.log("Anti-marriages loaded from:", framesBase);
+          console.log("Anti-marriages loaded from:", framesBase, "pairs:", JSON.stringify(manifest.antiMarriages));
         }
 
         // Get GPX files from manifest
@@ -1375,18 +1375,48 @@ function areAntiMarried(marbleId1, marbleId2) {
 // Works for both adjacent and non-adjacent anti-married pairs (wall behavior)
 function isAntiMarriageBlocked(marbleId, direction, track) {
   const myId = getMarbleIdentifier(marbleId);
-  if (!myId) return false;
+  if (!myId) { console.log('🧱 antiMarriage: no identifier for marble', marbleId); return false; }
   const myIdx = track.marbles.findIndex(m => m.id === marbleId);
   if (myIdx < 0) return false;
+  if (antiMarriageGroups.length === 0) { console.log('🧱 antiMarriage: no pairs loaded'); return false; }
   for (const pair of antiMarriageGroups) {
     if (!pair.includes(myId)) continue;
     const otherId = pair[0] === myId ? pair[1] : pair[0];
     const other = findMarbleByIdentifier(otherId);
-    if (!other || other.track !== track) continue;
+    if (!other) { console.log('🧱 antiMarriage: partner not found:', otherId); continue; }
+    if (other.track !== track) { console.log('🧱 antiMarriage: partner on different track'); continue; }
     const otherIdx = track.marbles.findIndex(m => m.id === other.marble.id);
     if (otherIdx < 0) continue;
-    if (direction === 'forward' && otherIdx > myIdx) return true;
-    if (direction === 'backward' && otherIdx < myIdx) return true;
+    if (direction === 'forward' && otherIdx > myIdx) { console.log('🧱 BLOCKED forward at', myId, '→', otherId); return true; }
+    if (direction === 'backward' && otherIdx < myIdx) { console.log('🧱 BLOCKED backward at', myId, '←', otherId); return true; }
+  }
+  return false;
+}
+
+// Check if navigating from one marble to another crosses an anti-marriage wall
+function isAntiMarriageWall(fromMarbleId, toMarbleId, track) {
+  if (!track || !fromMarbleId || !toMarbleId) return false;
+  const fromIdx = track.marbles.findIndex(m => m.id === fromMarbleId);
+  const toIdx = track.marbles.findIndex(m => m.id === toMarbleId);
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return false;
+
+  const lo = Math.min(fromIdx, toIdx);
+  const hi = Math.max(fromIdx, toIdx);
+
+  // Check if any anti-marriage pair has one member in [lo..hi) and the other in (lo..hi]
+  // i.e. the wall sits between fromIdx and toIdx
+  for (const pair of antiMarriageGroups) {
+    const idA = pair[0], idB = pair[1];
+    const mA = findMarbleByIdentifier(idA);
+    const mB = findMarbleByIdentifier(idB);
+    if (!mA || !mB || mA.track !== track || mB.track !== track) continue;
+    const iA = track.marbles.findIndex(m => m.id === mA.marble.id);
+    const iB = track.marbles.findIndex(m => m.id === mB.marble.id);
+    if (iA < 0 || iB < 0) continue;
+    const wallLo = Math.min(iA, iB);
+    const wallHi = Math.max(iA, iB);
+    // Wall blocks if the path from lo→hi crosses the wall segment wallLo→wallHi
+    if (wallLo >= lo && wallHi <= hi && wallLo !== wallHi) return true;
   }
   return false;
 }
@@ -1508,10 +1538,10 @@ function enableMarbleClickOnly(){
 function handleMarbleClick(e){
   // 🟢 STOP EVENT PROPAGATION - PREVENT MODAL FROM CLOSING
   e.originalEvent.stopPropagation();
-  
-  if (!e.features?.length) { 
-    deselectMarble(); 
-    return; 
+
+  if (!e.features?.length) {
+    deselectMarble();
+    return;
   }
   const marbleId = e.features[0].properties.id;
   const trackId = e.features[0].properties.trackId;
@@ -1519,6 +1549,11 @@ function handleMarbleClick(e){
   if (trackId !== currentTrackId) {
     selectTrackAndThenMarble(trackId, marbleId);
   } else {
+    // Block navigation across anti-marriage walls
+    if (selectedMarbleId && isAntiMarriageWall(selectedMarbleId, marbleId, getCurrentTrack())) {
+      console.log('🧱 Map click blocked by anti-marriage wall');
+      return;
+    }
     selectMarble(marbleId);
     showMarbleImage(marbleId);
   }
