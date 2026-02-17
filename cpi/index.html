@@ -1594,7 +1594,7 @@ function preloadAdjacentImages() {
   const track = getCurrentTrack();
   if (!track || !selectedMarbleId) return;
   const marbleIdx = track.marbles.findIndex(m => m.id === selectedMarbleId);
-  const neighbors = [marbleIdx - 1, marbleIdx + 1];
+  const neighbors = [marbleIdx - 1, marbleIdx + 1, marbleIdx - 2, marbleIdx + 2];
   for (const ni of neighbors) {
     if (ni >= 0 && ni < track.marbles.length) {
       const m = track.marbles[ni];
