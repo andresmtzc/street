@@ -135,6 +135,28 @@
       transform: translateY(-50%) scale(1.2);
     }
 
+    .nav-wall {
+      position: absolute;
+      width: 50px;
+      height: 4px;
+      background: #ff4444;
+      border-radius: 2px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      box-shadow: 0 0 8px rgba(255, 68, 68, 0.6);
+    }
+    #forwardWall {
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    #backwardWall {
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
     .time {
       position: absolute; right: 20px; bottom: 20px;
       color: #22d3ee; font-weight: 600; font-size: 14px;
@@ -241,6 +263,8 @@
       <!-- Navigation ring -->
       <div class="image-controls">
         <div class="navigation-ring">
+          <div class="nav-wall" id="forwardWall"></div>
+          <div class="nav-wall" id="backwardWall"></div>
           <button class="nav-button ring-button" id="nextImageBtn">&#9651;</button>
           <button class="nav-button ring-button" id="prevImageBtn">&#9661;</button>
           <button class="nav-button ring-button" id="branchBtn" style="opacity:0; pointer-events:none;">&#9655;</button>
@@ -2257,6 +2281,12 @@ function updateNavigationRing() {
     prevBtn.style.pointerEvents = canBackward ? 'auto' : 'none';
   }
 
+  // Show walls when navigation is blocked
+  const forwardWall = document.getElementById('forwardWall');
+  const backwardWall = document.getElementById('backwardWall');
+  if (forwardWall) forwardWall.style.opacity = canForward ? 0 : 1;
+  if (backwardWall) backwardWall.style.opacity = canBackward ? 0 : 1;
+
   // Branch button — show if current marble has married partners
   const mKey = getCurrentMarkerKey();
   const partners = mKey ? getMarriedPartners(mKey) : [];
@@ -2558,24 +2588,7 @@ function enableNavButtons() {
 let lastPathBearing = 0;
 
 function initConeSystem() {
-  if (!map.getSource('view-cone')) {
-    map.addSource('view-cone', {
-      type: 'geojson',
-      data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] } }
-    });
-
-    const beforeLayer = map.getLayer('blue-markers-layer') ? 'blue-markers-layer' : undefined;
-
-    map.addLayer({
-      id: 'view-cone-fill', type: 'fill', source: 'view-cone',
-      paint: { 'fill-color': '#ff8400', 'fill-opacity': 0.5 }
-    }, beforeLayer);
-
-    map.addLayer({
-      id: 'view-cone-outline', type: 'line', source: 'view-cone',
-      paint: { 'line-color': '#ff6b6b', 'line-width': 2, 'line-opacity': 0 }
-    }, beforeLayer);
-  }
+  // Cone removed from map — navigation direction shown via wall in nav ring instead
 }
 
 function getHorizontalFovDeg() {
@@ -2603,48 +2616,11 @@ function makeViewConeRing(lat, lon, headingDeg, fovDeg, radiusMeters, steps) {
 }
 
 function updateViewCone() {
-  if (!map || !map.getSource('view-cone')) return;
-
-  const pos = getCurrentPointPosition();
-  if (!pos) return;
-
-  const nextPos = getNextPointPosition();
-  const prevPos = getPrevPointPosition();
-  let pathBearing = lastPathBearing;
-
-  if (nextPos) {
-    pathBearing = bearingDeg(pos, nextPos);
-  } else if (prevPos) {
-    pathBearing = bearingDeg(prevPos, pos);
-  }
-
-  if (lastPathBearing !== undefined) {
-    let diff = pathBearing - lastPathBearing;
-    if (Math.abs(diff) > 180) {
-      pathBearing += diff > 0 ? -360 : 360;
-    }
-  }
-  lastPathBearing = pathBearing;
-
-  const userYawDeg = THREE.MathUtils.radToDeg(currentYaw);
-  const finalHeading = (pathBearing + userYawDeg + 360) % 360;
-
-  const fovH = getHorizontalFovDeg();
-  const ring = makeViewConeRing(pos[1], pos[0], finalHeading, fovH, 15, 24);
-
-  map.getSource('view-cone').setData({
-    type: 'Feature',
-    geometry: { type: 'Polygon', coordinates: [ring] }
-  });
+  // Cone removed from map — no-op
 }
 
 function hideViewCone() {
-  if (map && map.getSource('view-cone')) {
-    map.getSource('view-cone').setData({
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [[[0,0],[0,0],[0,0]]] }
-    });
-  }
+  // Cone removed from map — no-op
 }
 
 map.on('zoom', () => { if (currentIdx >= 0) updateViewCone(); });
