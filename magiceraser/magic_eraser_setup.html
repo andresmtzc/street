@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magic Eraser Setup Wizard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap');
+  :root{--bg:#0a0a0a;--border:#222;--accent:#00ff88;--accent2:#ff3366;--text:#eee;--muted:#555;--panel:#161616}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+  header h1{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);letter-spacing:.1em;text-transform:uppercase}
+  .import-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid #444;border-radius:5px;cursor:pointer;font-size:11px;color:#888;font-family:'Space Mono',monospace;transition:all .2s}
+  .import-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .import-btn input{display:none}
+  .step-bar{display:flex;gap:4px;margin-left:auto}
+  .step-dot{width:7px;height:7px;border-radius:50%;background:var(--border);transition:background .3s}
+  .step-dot.done{background:var(--accent)}
+  .step-dot.active{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  main{flex:1;display:grid;grid-template-columns:260px 1fr;overflow:hidden}
+  .sidebar{border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+  .step-info{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+  .step-title{font-size:16px;font-weight:500;line-height:1.3}
+  .step-desc{font-size:12px;color:#888;line-height:1.6}
+  .recorded-box{background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.25);border-radius:5px;padding:8px 12px;font-family:'Space Mono',monospace;font-size:11px;color:var(--accent)}
+  .btn{padding:10px 16px;border-radius:5px;border:none;cursor:pointer;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;transition:all .2s}
+  .btn-primary{background:var(--accent);color:#000}
+  .btn-primary:hover{background:#00cc6a}
+  .btn-primary:disabled{background:var(--border);color:var(--muted);cursor:not-allowed}
+  .btn-secondary{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .btn-secondary:hover{border-color:var(--text);color:var(--text)}
+  .btn-sm{padding:5px 10px;font-size:10px}
+  .nav-btns{display:flex;gap:8px;margin-top:auto;padding-top:12px}
+  .stroke-list{display:flex;flex-direction:column;gap:5px}
+  .stroke-item{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-family:'Space Mono',monospace;font-size:11px}
+  .content{padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;overflow-y:auto}
+  .toolbar{display:flex;align-items:center;gap:10px;width:100%;justify-content:space-between;flex-wrap:wrap}
+  .mode-badge{font-family:'Space Mono',monospace;font-size:10px;padding:4px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:.1em}
+  .mode-tap{background:rgba(0,255,136,.1);color:var(--accent);border:1px solid rgba(0,255,136,.3)}
+  .mode-draw{background:rgba(255,51,102,.1);color:var(--accent2);border:1px solid rgba(255,51,102,.3)}
+  .upload-label{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:5px;cursor:pointer;font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;transition:all .2s}
+  .upload-label:hover{border-color:var(--accent);color:var(--accent)}
+  .upload-label input{display:none}
+  canvas{display:block;cursor:crosshair;border:1px solid var(--border);border-radius:6px}
+  .export-wrap{padding:24px;display:flex;flex-direction:column;align-items:center;gap:16px;max-width:680px;margin:0 auto;width:100%}
+  .summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+  .summary-card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px}
+  .summary-card .lbl{font-size:10px;font-family:'Space Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
+  .summary-card .val{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent)}
+  .export-preview{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:14px;font-family:'Space Mono',monospace;font-size:11px;color:#777;max-height:200px;overflow-y:auto;width:100%;white-space:pre}
+  .instructions{background:#100800;border:1px solid #ff6600;border-radius:6px;padding:14px 18px;width:100%}
+  .instructions .ititle{font-family:'Space Mono',monospace;font-size:10px;color:#ff6600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+  .instructions .itext{font-size:12px;color:#aaa;line-height:1.7;margin-bottom:6px}
+  .code-block{background:#0a0a0a;border:1px solid #333;border-radius:4px;padding:8px 12px;font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);margin-top:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Magic Eraser · Setup</h1>
+  <label class="import-btn" title="Import existing config.json to edit masks only">
+    <input type="file" accept=".json" onchange="importConfig(event)">
+    ↑ Import config.json
+  </label>
+  <div class="step-bar" id="stepBar"></div>
+</header>
+<main>
+  <div class="sidebar" id="sidebar"></div>
+  <div class="content" id="content"></div>
+</main>
+
+<script>
+const COLORS = ['#00ff88','#ff3366','#ffaa00','#00aaff','#ff00ff'];
+
+const STEPS = [
+  {id:'edit_btn',     title:'Edit Button',        desc:'Upload a screenshot of your photo inside the album. Tap the <b>Edit</b> button.<br><br><b style="color:#ff9900;">📋 Before starting:</b> Create a Google Photos album with all photos to batch process. The script removes each photo from the album after editing so the next one is always first.', mode:'tap', key:'EDIT_BTN'},
+  {id:'actions_tab',  title:'Actions Tab',         desc:'Upload a screenshot of edit mode. Tap the <b>Actions</b> tab at the bottom.',           mode:'tap', key:'ACTIONS_TAP'},
+  {id:'magic_eraser', title:'Magic Eraser',        desc:'Upload a screenshot of the Actions screen. Tap the <b>Magic Eraser</b> button.',         mode:'tap', key:'MAGIC_ERASER'},
+  {id:'mask_strokes', title:'Draw Mask Strokes',   desc:'Upload the Magic Eraser screen. <b>Click</b> to add points, <b>double-click</b> to finish each stroke. Draw all strokes needed to cover the car hood.', mode:'draw'},
+  {id:'erase_btn',    title:'Erase Button',        desc:'Upload a screenshot showing the Erase button. Tap <b>Erase</b>.',                        mode:'tap', key:'ERASE_BTN'},
+  {id:'checkmark',    title:'Checkmark',           desc:'Upload a screenshot after erasing. Tap the <b>checkmark</b> button.',                    mode:'tap', key:'CHECKMARK'},
+  {id:'save_copy',    title:'Save as Copy',        desc:'Upload the edit screen after applying. Tap <b>Save as copy</b>.',                        mode:'tap', key:'SAVE_AS_COPY'},
+  {id:'three_dot',    title:'3-Dot Menu',          desc:'Upload the photo view. Tap the <b>3-dot menu</b> at top right.',                        mode:'tap', key:'THREE_DOT'},
+  {id:'remove_album', title:'Remove from Album',   desc:'Upload with 3-dot menu open. Tap <b>Remove from album</b>.',                            mode:'tap', key:'REMOVE_ALBUM'},
+  {id:'export',       title:'Export Config',       desc:'All done! Download your config.json.',                                                  mode:'export'}
+];
+
+const st = {
+  step: 0,
+  img: null, imgW: 1, imgH: 1, sx: 1, sy: 1,
+  coords: {}, waypoints: [], currentStroke: [],
+  devW: null, devH: null,
+  maskOnly: false
+};
+
+function render() {
+  document.getElementById('stepBar').innerHTML = STEPS.map((s,i) =>
+    `<div class="step-dot${i<st.step?' done':''}${i===st.step?' active':''}" title="${s.title}"></div>`
+  ).join('');
+  renderSidebar();
+  renderContent();
+}
+
+function renderSidebar() {
+  const s = STEPS[st.step];
+  const done = canProceed();
+  let extra = '';
+  if (s.mode === 'draw') {
+    extra += `<div class="stroke-list" id="strokeList">${strokeListHTML()}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">
+        <button class="btn btn-secondary btn-sm" onclick="undoStroke()">↩ Undo</button>
+        <button class="btn btn-secondary btn-sm" onclick="clearStrokes()">✕ Clear</button>
+      </div>`;
+  }
+  if (s.key && st.coords[s.key]) {
+    extra += `<div class="recorded-box">✓ ${s.key} = [${st.coords[s.key].join(', ')}]</div>`;
+  }
+  const isLast = st.step === STEPS.length - 2;
+  const backBtn = st.step > 0 ? `<button class="btn btn-secondary" onclick="goBack()">← Back</button>` : '';
+  const nextBtn = s.mode !== 'export'
+    ? `<button class="btn btn-primary" id="nextBtn" onclick="goNext()" style="flex:1" ${done?'':'disabled'}>${isLast ? 'Export →' : 'Next →'}</button>`
+    : '';
+  document.getElementById('sidebar').innerHTML =
+    `<div class="step-info">Step ${st.step+1} of ${STEPS.length}</div>
+     <div class="step-title">${s.title}</div>
+     <div class="step-desc">${s.desc}</div>
+     ${extra}
+     <div class="nav-btns">${backBtn}${nextBtn}</div>`;
+}
+
+function renderContent() {
+  const s = STEPS[st.step];
+  const area = document.getElementById('content');
+  if (s.mode === 'export') { renderExport(area); return; }
+  area.innerHTML = `
+    <div class="toolbar">
+      <span class="mode-badge ${s.mode==='tap'?'mode-tap':'mode-draw'}">${s.mode==='tap'?'🎯 Click the target button':'✏️ Click to add points · Double-click to finish stroke'}</span>
+      <label class="upload-label"><input type="file" accept="image/*" onchange="loadImg(event)">📎 Upload Screenshot</label>
+    </div>
+    <canvas id="cv"></canvas>`;
+  initCanvas();
+}
+
+function initCanvas() {
+  const cv = document.getElementById('cv');
+  const s = STEPS[st.step];
+  if (!st.img) {
+    cv.width=500; cv.height=300;
+    const ctx=cv.getContext('2d');
+    ctx.fillStyle='#111'; ctx.fillRect(0,0,500,300);
+    ctx.fillStyle='#333'; ctx.font='13px Space Mono,monospace'; ctx.textAlign='center';
+    ctx.fillText('Upload a screenshot to get started',250,150);
+    return;
+  }
+  fitImg(cv);
+  if (s.mode==='tap') {
+    cv.onclick = onTap;
+    if (s.key && st.coords[s.key]) {
+      const [dx,dy]=st.coords[s.key];
+      drawMarker(cv, dx/st.sx, dy/st.sy);
+    }
+  } else {
+    cv.onclick = onDrawClick;
+    cv.ondblclick = onDrawDblClick;
+    redraw();
+  }
+}
+
+function fitImg(cv) {
+  const area = document.getElementById('content');
+  const maxW = area.clientWidth - 40;
+  const maxH = window.innerHeight * 0.85 - 120;
+  const r = Math.min(maxW/st.imgW, maxH/st.imgH, 1);
+  cv.width = Math.round(st.imgW*r);
+  cv.height = Math.round(st.imgH*r);
+  st.sx = st.imgW/cv.width;
+  st.sy = st.imgH/cv.height;
+  cv.getContext('2d').drawImage(st.img,0,0,cv.width,cv.height);
+}
+
+function loadImg(e) {
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      st.img=img; st.imgW=img.naturalWidth; st.imgH=img.naturalHeight;
+      st.devW=img.naturalWidth; st.devH=img.naturalHeight;
+      initCanvas(); updateNextBtn();
+    };
+    img.src=ev.target.result;
+  };
+  r.readAsDataURL(f);
+}
+
+function onTap(e) {
+  const cv=document.getElementById('cv');
+  const rect=cv.getBoundingClientRect();
+  const dx=Math.round((e.clientX-rect.left)*st.sx);
+  const dy=Math.round((e.clientY-rect.top)*st.sy);
+  const s=STEPS[st.step];
+  st.coords[s.key]=[dx,dy];
+  fitImg(cv);
+  drawMarker(cv,(e.clientX-rect.left),(e.clientY-rect.top));
+  renderSidebar();
+}
+
+function drawMarker(cv,cx,cy) {
+  const ctx=cv.getContext('2d');
+  ctx.beginPath(); ctx.arc(cx,cy,12,0,Math.PI*2); ctx.strokeStyle='#00ff88'; ctx.lineWidth=2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2); ctx.fillStyle='#00ff88'; ctx.fill();
+  ctx.strokeStyle='rgba(0,255,136,.4)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(cx-20,cy); ctx.lineTo(cx+20,cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx,cy-20); ctx.lineTo(cx,cy+20); ctx.stroke();
+}
+
+function onDrawClick(e) {
+  if(e.detail===2) return;
+  const cv=document.getElementById('cv');
+  const rect=cv.getBoundingClientRect();
+  st.currentStroke.push([Math.round((e.clientX-rect.left)*st.sx), Math.round((e.clientY-rect.top)*st.sy)]);
+  redraw();
+}
+
+function onDrawDblClick(e) {
+  if(st.currentStroke.length<2){st.currentStroke=[];return;}
+  st.waypoints.push([...st.currentStroke]);
+  st.currentStroke=[];
+  refreshStrokeList(); redraw(); updateNextBtn();
+}
+
+function redraw() {
+  const cv=document.getElementById('cv'); if(!cv) return;
+  const ctx=cv.getContext('2d');
+  if(st.img) ctx.drawImage(st.img,0,0,cv.width,cv.height);
+  st.waypoints.forEach((s,i)=>drawStroke(ctx,s,COLORS[i%COLORS.length],false));
+  if(st.currentStroke.length) drawStroke(ctx,st.currentStroke,'rgba(255,255,255,.6)',true);
+}
+
+function drawStroke(ctx,stroke,color,dashed) {
+  ctx.beginPath();
+  stroke.forEach(([dx,dy],i)=>{const cx=dx/st.sx,cy=dy/st.sy; i?ctx.lineTo(cx,cy):ctx.moveTo(cx,cy);});
+  ctx.strokeStyle=color; ctx.lineWidth=2;
+  dashed?ctx.setLineDash([4,4]):ctx.setLineDash([]);
+  ctx.stroke(); ctx.setLineDash([]);
+  stroke.forEach(([dx,dy])=>{ctx.beginPath();ctx.arc(dx/st.sx,dy/st.sy,3,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();});
+}
+
+function undoStroke() {
+  st.currentStroke.length?st.currentStroke=[]:st.waypoints.pop();
+  refreshStrokeList(); redraw(); updateNextBtn();
+}
+
+function clearStrokes() {
+  st.waypoints=[]; st.currentStroke=[];
+  refreshStrokeList(); redraw(); updateNextBtn();
+}
+
+function deleteStroke(i) {
+  st.waypoints.splice(i,1);
+  refreshStrokeList(); redraw(); updateNextBtn();
+}
+
+function strokeListHTML() {
+  if(!st.waypoints.length) return '<div style="font-size:11px;color:var(--muted);font-family:Space Mono,monospace;">No strokes yet</div>';
+  return st.waypoints.map((s,i)=>
+    `<div class="stroke-item">
+      <span style="color:${COLORS[i%COLORS.length]};font-family:Space Mono,monospace;">Stroke ${i+1}</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="color:var(--muted);">${s.length} pts</span>
+        <button onclick="deleteStroke(${i})" style="background:transparent;border:1px solid #ff3366;color:#ff3366;border-radius:3px;padding:2px 7px;cursor:pointer;font-size:10px;font-family:Space Mono,monospace;">✕</button>
+      </div>
+    </div>`
+  ).join('');
+}
+
+function refreshStrokeList() {
+  const el=document.getElementById('strokeList');
+  if(el) el.innerHTML=strokeListHTML();
+}
+
+function canProceed() {
+  const s=STEPS[st.step];
+  if(s.mode==='tap') return !!(s.key && st.coords[s.key]);
+  if(s.mode==='draw') return st.waypoints.length>0;
+  return true;
+}
+
+function updateNextBtn() {
+  const btn=document.getElementById('nextBtn');
+  if(btn) btn.disabled=!canProceed();
+}
+
+function goNext() {
+  if(!canProceed()) return;
+  if(st.maskOnly && STEPS[st.step].id==='mask_strokes') {
+    st.step=STEPS.findIndex(s=>s.id==='export');
+    st.img=null; st.currentStroke=[]; render(); return;
+  }
+  st.step++; st.img=null; st.currentStroke=[]; render();
+}
+
+function goBack() {
+  if(st.step>0){st.step--; st.img=null; st.currentStroke=[]; render();}
+}
+
+function importConfig(e) {
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    try {
+      const cfg=JSON.parse(ev.target.result);
+      st.coords=cfg.coords||{};
+      st.waypoints=cfg.waypoints||[];
+      st.devW=cfg.device&&cfg.device.width;
+      st.devH=cfg.device&&cfg.device.height;
+      st.maskOnly=true;
+      st.step=STEPS.findIndex(s=>s.id==='mask_strokes');
+      st.img=null; st.currentStroke=[];
+      render();
+    } catch(err){alert('Invalid config.json');}
+  };
+  r.readAsText(f);
+}
+
+function buildCfg() {
+  return {device:{width:st.devW,height:st.devH},coords:st.coords,waypoints:st.waypoints};
+}
+
+function renderExport(area) {
+  const cfg=buildCfg();
+  const json=JSON.stringify(cfg,null,2);
+  const totalPts=st.waypoints.reduce((a,s)=>a+s.length,0);
+  area.innerHTML=`
+    <div class="export-wrap">
+      <div style="font-size:32px;">✅</div>
+      <div style="font-size:18px;font-weight:500;">Setup Complete!</div>
+      <div class="summary-grid">
+        <div class="summary-card"><div class="lbl">Device</div><div class="val">${cfg.device.width||'?'} × ${cfg.device.height||'?'}</div></div>
+        <div class="summary-card"><div class="lbl">Coordinates</div><div class="val">${Object.keys(cfg.coords).length} recorded</div></div>
+        <div class="summary-card"><div class="lbl">Mask Strokes</div><div class="val">${st.waypoints.length}</div></div>
+        <div class="summary-card"><div class="lbl">Total Points</div><div class="val">${totalPts}</div></div>
+      </div>
+      <div style="width:100%"><div style="font-family:Space Mono,monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;">config.json preview</div>
+      <div class="export-preview">${json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div></div>
+      <button class="btn btn-primary" onclick="dlJSON()" style="width:100%;padding:13px;font-size:12px;">⬇ Download config.json</button>
+      <div style="font-size:12px;color:var(--muted);text-align:center;">Place config.json in the same folder as magic_eraser_batch.py</div>
+      <div class="instructions">
+        <div class="ititle">⚠️ First time on a new device?</div>
+        <div class="itext">1. Enable <b style="color:#eee;">USB Debugging</b> — Settings → Developer Options → USB Debugging<br>2. Connect phone via USB<br>3. Run once:</div>
+        <div class="code-block">python3 -m uiautomator2 init</div>
+        <div class="itext" style="margin-top:8px;">4. Then run:</div>
+        <div class="code-block">python3 magic_eraser_batch.py</div>
+      </div>
+    </div>`;
+  document.getElementById('sidebar').innerHTML=
+    `<div class="step-info">Done!</div>
+     <div class="step-title">All set</div>
+     <div class="step-desc">Download config.json and place it next to your Python script.</div>
+     <div class="nav-btns"><button class="btn btn-secondary" onclick="goBack()">← Back</button></div>`;
+}
+
+function dlJSON() {
+  const blob=new Blob([JSON.stringify(buildCfg(),null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='config.json'; a.click();
+}
+
+render();
+</script>
+</body>
+</html>
